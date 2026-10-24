@@ -125,3 +125,24 @@ def test_operator_route_for_one_robot(monkeypatch):
     titles = [e['title'] for e in reversed(fleet.events) if e['title'].startswith('RM-2 reached point')]
     assert titles == ['RM-2 reached point 1', 'RM-2 reached point 2', 'RM-2 reached point 3']
     assert fleet.loc(fleet.robot('RM-2'))[0] == fleet.city.hub
+
+
+def test_busy_model_falls_back_to_the_next_one():
+    from types import SimpleNamespace
+    from backend.agent import Decision
+    from backend.llm import LLM
+
+    class Busy(Exception):
+        code = 503
+
+    def generate_content(model, contents, config=None):
+        if model == 'gemma-main':
+            raise Busy('high demand')
+        return SimpleNamespace(text='{"analysis": "Go around.", "action": "detour"}')
+
+    llm = LLM()
+    llm.client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    llm.chain = ['gemma-main', 'backup-model']
+    info = {}
+    assert llm.generate('prompt', Decision, info).action == 'detour'
+    assert info['model'] == 'backup-model'

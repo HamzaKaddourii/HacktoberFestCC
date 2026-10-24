@@ -1,29 +1,39 @@
-# Validation record — October 24, 2026 (city map + onboard agents)
+# Validation record — October 24, 2026
 
-- Fetched Le Marais, Paris from OpenStreetMap: 397 intersections, 547 street segments, 33 km, 8 pickup and
-  12 drop-off places. Saved as `backend/data/city.json`.
-- **22 backend tests passed**, run repeatedly (Python 3.13.7, locked dependencies).
-- Randomised stress run: 12 missions of 9 orders each, with random obstacles (some permanent city notices),
-  a low-battery event and a mid-mission urgent change. 10 completed; the other 2 waited only for an order
-  that permanent closures fully cut off. That is correct: the order stays queued and the reason is logged.
-  This run found and fixed three bugs: waiting orders that were never retried, stale private notes that
-  stranded a robot, and endless re-checks of a permanent closure (repeat reports are now trusted longer).
-- **TypeScript check and Vite production build passed.**
-- Ran the FastAPI server and dashboard on port 8000. Loaded the sample mission. OR-Tools plan 11.40 km vs
-  greedy 12.29 km (−7 %); last delivery after 3.88 km vs 5.28 km (−26 %); three robots used, one in reserve.
-- Placed hidden obstacles through the API during a live run:
-  - **Roadworks:** the robot saw them at 30–35 m, stopped, detoured (+34 to +171 m depending on position)
-    and shared them; the server re-routed another robot from that report.
-  - **Small obstacle:** the robot passed slowly ("passed safely").
-  - **City-notice closure:** robots re-routed without seeing it.
-- Checked the asynchronous AI path with a slow scripted model (1.2 s per call). The robot stayed in
-  "thinking" in a background thread while the other robots kept moving; the decision was applied with
-  its latency.
-- Checked the dashboard in headless Chrome at desktop width and at a 390 px phone viewport: no
-  horizontal overflow, and the page starts at the top.
+## Automated
+- **27 backend tests pass** (Python 3.13, locked dependencies). They cover:
+  - the street graph, routing and click snapping;
+  - dispatcher constraints (pickup before drop-off, capacity, parcels on board, urgent first, unreachable orders);
+  - robot behaviour (hidden obstacles, stopping to think, waiting, slow pass, bumper, city notices, low battery, safety reflex);
+  - the AI path with a scripted model: decisions applied and shared, invalid or failed answers falling back, no ground-truth fields in the prompt, memory across decisions;
+  - the backup-model chain, operator routes, custom points, and API validation.
+- **TypeScript check and Vite production build pass.**
+- **Randomised stress run:** 12 missions of 9 orders each, with random obstacles (some permanent city notices), a low-battery event and a mid-mission urgent change. 10 completed; the other 2 waited only for orders that permanent closures had made unreachable. This run found three bugs, all fixed:
+  - waiting orders that were never retried;
+  - stale private notes that stranded a robot;
+  - endless re-checks of a permanent closure (a repeated report is now trusted longer).
 
-**Not tested:** live Gemma generation, because no API key was available. Without a key, every decision is
-labelled "Reflex rules" and the copilot reports that the AI is unavailable.
+## Live AI (Google GenAI API)
+- **Gemma 4 26B** (`gemma-4-26b-a4b-it`) made correct live decisions in about 4 s each:
+  - detour around a van misclassified as "person";
+  - slow pass of a scooter with a 1.16 m gap;
+  - return to hub on low battery, releasing its unpicked orders.
+- Three robots asking at once: no rate-limit errors, and the other robots kept driving.
+- During a period when Google returned 500 and 503 errors and timeouts for Gemma, the **backup chain** answered instead: Gemini 3.1 Flash Lite and Gemini 3 Flash. Decisions stayed correct, and each was labelled with the model that answered.
+- Models sometimes added stray tokens around their JSON; the tolerant parser handles this (covered by a test).
+- Dispatcher copilot: correct explanations from the robots' own reasoning. Single commands work: urgent order, street closure, new order. Instructions that combine several changes can contain an invented place; validation rejects the whole message.
 
-Limitations: one in-memory mission, one backend process, simulated sensors/battery/speed, heuristic
-OR-Tools search, no physical robot.
+## Browser (headless Chrome)
+- Dashboard at desktop width and at a 390 px phone viewport: no horizontal overflow, and the page starts at the top.
+- 3D city view (MapLibre + OpenFreeMap): buildings, robot labels and the follow camera render with no console errors.
+- Click-throughs with no console errors:
+  - **Route:** select robot → New route → points → rename and reorder → Save → Start.
+  - **Points:** add, edit, protected delete, Clear all.
+
+## Live mission (sample, 6 orders, 4 robots, Le Marais)
+- OR-Tools plan 11.40 km vs greedy 12.29 km (−7 %); last delivery after 3.88 km vs 5.28 km (−26 %).
+- Hidden roadworks: seen at 30–35 m, the robot stopped, detoured and shared them, and the server re-routed another robot from that report.
+
+## Not covered
+- No physical robot or real camera images: robots, sensors, battery and speed are simulated.
+- One in-memory mission, one backend process; OR-Tools search is time-bounded.

@@ -75,10 +75,11 @@ class RobotAgent:
         note = None
         if self.llm is not None and self.llm.available:
             try:
-                decision = self.llm.generate(self.prompt(obs), Decision)
+                info = {}
+                decision = self.llm.generate(self.prompt(obs), Decision, info)
                 problem = check(decision, obs)
                 if problem is None:
-                    return {'decision': normalise(decision), 'source': 'ai', 'model': self.llm.model,
+                    return {'decision': normalise(decision), 'source': 'ai', 'model': info.get('model', self.llm.model),
                             'latency_ms': round((time.perf_counter()-started)*1000), 'note': None}
                 note = f'AI answer rejected ({problem}); reflex rules took over.'
             except Exception as exc:

@@ -13,7 +13,7 @@ class FakeLLM:
         self.replies = list(replies)
         self.prompts = []
 
-    def generate(self, prompt, schema):
+    def generate(self, prompt, schema, info=None):
         self.prompts.append(prompt)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
