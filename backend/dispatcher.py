@@ -12,7 +12,7 @@ from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 UNREACHABLE = 1_000_000
 DROP_PENALTY = 200_000
-URGENT_COST_PER_METRE = 3
+URGENT_COST_PER_METRE = 10
 SPAN_COST = 3  # cost per metre of the longest route: shares work so the last delivery lands sooner
 
 

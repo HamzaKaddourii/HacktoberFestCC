@@ -55,6 +55,7 @@ class Robot:
         self.battery_alerted = False
         self.sensors = {}
         self.thoughts = deque(maxlen=25)
+        self.mission = None        # a route the operator drew for this robot; the dispatcher leaves it alone
 
 
 class Fleet:
@@ -107,15 +108,114 @@ class Fleet:
             raise ValueError(f'Unknown place {pid}.')
         return self.city.places[pid]
 
+    def name_of(self, order, kind):
+        place = self.city.places.get(order[kind])
+        return place['name'] if place else order['names'][kind]
+
+    # ------------------------------------------------------------------ points on the map
+    def in_use(self, pid):
+        return next((o for o in self.orders.values() if o['status'] != 'delivered' and pid in (o['pickup'], o['dropoff'])), None)
+
+    def add_place(self, lat, lon, name, role):
+        if not name:
+            raise ValueError('Give the point a name.')
+        pid = self.city.add_place(lat, lon, name, role)
+        self.event(f'New point: {name}', f"{'Pickup' if role == 'pickup' else 'Drop-off'} at {self.city.label(self.city.places[pid]['node'])}.")
+        return pid
+
+    def update_place(self, pid, name=None, role=None):
+        p = self.place(pid)
+        if role and role != p['role']:
+            order = self.in_use(pid)
+            if order:
+                raise ValueError(f"{p['name']} is used by order #{order['id']}. Finish or reset that order first.")
+            p['role'] = role
+        if name:
+            p['name'] = name
+
+    def remove_place(self, pid):
+        p = self.place(pid)
+        order = self.in_use(pid)
+        if order:
+            raise ValueError(f"{p['name']} is used by order #{order['id']}. Finish or reset that order first.")
+        del self.city.places[pid]
+        self.event(f'Point removed: {p["name"]}', 'It can no longer be used for new orders.')
+
+    # ------------------------------------------------------------------ routes drawn by the operator
+    def plan_mission(self, rid, waypoints):
+        """Save an ordered list of points for one robot. It shows the street route and waits for Start."""
+        r = self.robot(rid)
+        if r.load:
+            raise ValueError(f'{r.id} still carries {len(r.load)} parcel(s). Let it deliver them first, or pick another robot.')
+        if r.status in ('thinking', 'waiting', 'charging'):
+            raise ValueError(f'{r.id} is {r.status} right now. Try again in a moment.')
+        stops = []
+        for n, w in enumerate(waypoints, 1):
+            if w.get('place'):
+                p = self.place(w['place'])
+                node, name = p['node'], p['name']
+            else:
+                a, b, along, lateral = self.city.nearest_edge(w['lat'], w['lon'])
+                if lateral > 60:
+                    raise ValueError(f'Point {n} is too far from a street.')
+                node = a if along <= self.city.length(a, b) / 2 else b
+                name = (w.get('name') or '').strip() or f'Point {n}'
+            stops.append({'order': None, 'kind': 'waypoint', 'node': node, 'name': name, 'n': n})
+        released = [o for o in self.orders.values() if o['status'] == 'assigned' and o['robot'] == r.id]
+        r.returning, r.encounter, r.thinking = False, None, None
+        self.assign(r, stops)
+        for o in released:
+            o['status'], o['robot'] = 'queued', None
+        r.mission = {'state': 'saved', 'points': [{'n': s['n'], 'name': s['name'], 'node': s['node'], 'done': False} for s in stops]}
+        r.status = 'planned'
+        self.event(f'Route saved for {r.id}', ' → '.join(s['name'] for s in stops) + f' → hub · {round(self.remaining(r))} m. Press Start.', 'success', r.id)
+        if released:
+            self.dispatch(f'{r.id} took a manual route')
+
+    def start_mission(self, rid):
+        r = self.robot(rid)
+        if not r.mission:
+            raise ValueError(f'{r.id} has no saved route.')
+        if r.status == 'planned':
+            r.status = 'moving'
+        r.mission['state'] = 'running'
+        if not self.running:
+            self.running = True
+            self.event('Fleet running', f'Simulation at ×{self.speed}.', 'success')
+        self.event(f'{r.id} started its route', f"{len(r.mission['points'])} points to visit.", 'success', r.id)
+
+    def cancel_mission(self, rid):
+        r = self.robot(rid)
+        if not r.mission:
+            raise ValueError(f'{r.id} has no saved route.')
+        r.mission = None
+        r.encounter = r.thinking = None
+        self.assign(r, [])
+        r.status = 'moving' if len(r.path) > 1 else 'idle'
+        self.event(f'Route cancelled for {r.id}', 'Back under dispatcher control.', 'info', r.id)
+        self.dispatch(f'{r.id} back in the pool')
+
+    def resume_mission(self, r):
+        left = [p for p in r.mission['points'] if not p['done']]
+        if not left:
+            r.mission = None
+            return
+        self.assign(r, [{'order': None, 'kind': 'waypoint', 'node': p['node'], 'name': p['name'], 'n': p['n']} for p in left])
+        r.mission['state'] = 'saved'
+        r.status = 'planned'
+        self.event(f'{r.id} ready to continue its route', f'{len(left)} point(s) left. Press Start.', 'info', r.id)
+
     # ------------------------------------------------------------------ orders & controls
     def add_order(self, pickup, dropoff, priority='normal'):
         p, d = self.place(pickup), self.place(dropoff)
         if p['role'] != 'pickup' or d['role'] != 'dropoff':
-            raise ValueError('Orders go from a pickup place (P…) to a drop-off place (D…).')
+            raise ValueError('Orders go from a pickup point to a drop-off point.')
         self.ids['order'] += 1
         oid = self.ids['order']
+        # Names are kept so delivered orders still read well if a point is later renamed or deleted.
         self.orders[oid] = {'id': oid, 'pickup': pickup, 'dropoff': dropoff, 'priority': priority, 'status': 'queued',
-                            'robot': None, 'created': self.clock(), 'delivered_at': None}
+                            'robot': None, 'created': self.clock(), 'delivered_at': None,
+                            'names': {'pickup': p['name'], 'dropoff': d['name']}}
         self.completed = False
         return oid
 
@@ -124,6 +224,8 @@ class Fleet:
             raise ValueError('Reset the current mission before loading the sample.')
         pickups = [p for p in self.city.places.values() if p['role'] == 'pickup']
         drops = [p for p in self.city.places.values() if p['role'] == 'dropoff']
+        if not pickups or not drops:
+            raise ValueError('The sample needs at least one pickup and one drop-off point.')
         for i, j, priority in SAMPLE:
             self.add_order(pickups[i % len(pickups)]['id'], drops[j % len(drops)]['id'], priority)
         self.event('Sample mission loaded', f'{len(SAMPLE)} orders from real places in {self.city.name}.')
@@ -136,12 +238,12 @@ class Fleet:
         if order['status'] == 'delivered':
             raise ValueError(f'Order #{oid} is already delivered.')
         order['priority'] = priority
-        self.event(f'Order #{oid} is now {priority}', f"{self.place(order['pickup'])['name']} → {self.place(order['dropoff'])['name']}", 'warning' if priority == 'urgent' else 'info')
+        self.event(f'Order #{oid} is now {priority}', f"{self.name_of(order, 'pickup')} → {self.name_of(order, 'dropoff')}", 'warning' if priority == 'urgent' else 'info')
         self.dispatch(f'Order #{oid} priority changed')
 
     def start(self):
-        if not self.orders:
-            raise ValueError('Load the sample mission or add an order first.')
+        if not self.orders and not any(r.mission for r in self.robots):
+            raise ValueError('Load the sample mission, add an order, or save a route for a robot first.')
         self.running = True
         self.event('Fleet running', f'Simulation at ×{self.speed}.', 'success')
         if any(o['status'] == 'queued' for o in self.orders.values()):
@@ -277,7 +379,7 @@ class Fleet:
             r.avoid_until.clear()
             path, start_along, indices = self.plan_route(r, targets, self.blockers(r))
         r.path, r.seg, r.along = path, 0, start_along
-        r.stops = [{'order': s['order'], 'kind': s['kind'], 'node': s['node'], 'index': indices[i]} for i, s in enumerate(stops)]
+        r.stops = [{**s, 'index': indices[i]} for i, s in enumerate(stops)]
         if r.status == 'idle' and len(path) > 1:
             r.status = 'moving'
 
@@ -369,7 +471,9 @@ class Fleet:
             if r.battery >= 100:
                 r.status, r.battery_alerted = 'idle', False
                 self.event(f'{r.id} fully charged', 'Back in service.', 'success', r.id)
-                if r.load or any(o['status'] == 'queued' for o in self.orders.values()):
+                if r.mission:
+                    self.resume_mission(r)
+                elif r.load or any(o['status'] == 'queued' for o in self.orders.values()):
                     self.dispatch(f'{r.id} back in service')
             return
         if r.status == 'serving':
@@ -433,6 +537,12 @@ class Fleet:
         if not here:
             return False
         for s in here:
+            if s['kind'] == 'waypoint':
+                for p in (r.mission or {}).get('points', []):
+                    if p['n'] == s['n']:
+                        p['done'] = True
+                self.event(f"{r.id} reached point {s['n']}", s['name'], 'success', r.id)
+                continue
             order = self.orders[s['order']]
             place = self.place(order[s['kind']])
             if s['kind'] == 'pickup':
@@ -452,6 +562,9 @@ class Fleet:
         if r.path[-1] != self.city.hub:
             r.status = 'blocked'
             return
+        if r.mission and all(p['done'] for p in r.mission['points']):
+            self.event(f'{r.id} finished its route', f"Visited {len(r.mission['points'])} points and came back to the hub.", 'success', r.id)
+            r.mission = None
         if r.returning or r.battery < 60:
             r.status, r.returning = 'charging', False
             self.event(f'{r.id} charging at the hub', f'Battery {round(r.battery)}%.', 'info', r.id)
@@ -635,11 +748,22 @@ class Fleet:
                 # Asking for help reports the obstacle to the server even if not broadcast as a warning.
                 self.share(r, h, d, quiet=True)
         r.status, r.encounter = 'moving', None
+        if r.mission:
+            # A drawn route keeps its points: re-plan the streets between them around the obstacle.
+            try:
+                self.assign(r, [dict(s) for s in r.stops])
+                self.outcome(r, 're-planned its route around the obstacle')
+            except Unreachable:
+                r.status = 'blocked'
+                self.outcome(r, 'no open street to its next point')
+            return
         self.outcome(r, 'handed the problem to the dispatcher')
         self.dispatch(f'{r.id} asked for help', include_busy=r)
 
     def send_home(self, r, why):
         r.returning, r.encounter, r.thinking = True, None, None
+        if r.mission:
+            r.mission['state'] = 'interrupted'
         released = [o for o in self.orders.values() if o['status'] == 'assigned' and o['robot'] == r.id]
         for o in released:
             o['status'], o['robot'] = 'queued', None
@@ -701,6 +825,9 @@ class Fleet:
         needed = self.remaining(r)
         stops = []
         for s in r.stops[:4]:
+            if s['kind'] == 'waypoint':
+                stops.append(f"Visit point {s['n']} of the operator's route: {s['name']}, {round(self.remaining(r, s['index']))} m away")
+                continue
             o = self.orders[s['order']]
             p = self.place(o[s['kind']])
             stops.append(f"{'Pick up' if s['kind'] == 'pickup' else 'Drop off'} order #{o['id']}"
@@ -771,7 +898,7 @@ class Fleet:
         vehicles = []
         for r in self.robots:
             busy = r.status in ('thinking', 'waiting') and r is not include_busy
-            if r.returning or busy or r.status in ('charging', 'blocked'):
+            if r.returning or busy or r.mission or r.status in ('charging', 'blocked'):
                 continue
             costs = self.start_costs(r, blockers)
             if self.city.hub not in costs:
@@ -846,26 +973,34 @@ class Fleet:
         status = 'returning' if r.returning and r.status == 'moving' else r.status
         stops = []
         for s in r.stops:
+            if s['kind'] == 'waypoint':
+                stops.append({'order': None, 'kind': 'waypoint', 'place': s['name'], 'urgent': False,
+                              'metres': round(self.remaining(r, s['index'])), 'pos': self.city.nodes[s['node']]})
+                continue
             o = self.orders[s['order']]
-            stops.append({'order': o['id'], 'kind': s['kind'], 'place': self.place(o[s['kind']])['name'],
-                          'urgent': o['priority'] == 'urgent', 'metres': round(self.remaining(r, s['index']))})
+            stops.append({'order': o['id'], 'kind': s['kind'], 'place': self.name_of(o, s['kind']),
+                          'urgent': o['priority'] == 'urgent', 'metres': round(self.remaining(r, s['index'])),
+                          'pos': self.city.nodes[s['node']]})
         return {'id': r.id, 'name': r.name, 'color': r.color, 'status': status, 'pos': [round(lat, 6), round(lon, 6)],
                 'heading': round(heading), 'battery': round(r.battery, 1), 'load': r.load, 'capacity': CAPACITY,
                 'distance': round(r.distance), 'street': self.city.street(a, nxt) if nxt is not None else self.city.label(a),
                 'stops': stops, 'path': self.path_coords(r), 'sensors': r.sensors,
                 'wait_left': round(r.wait_until - self.time) if r.status == 'waiting' else None,
+                'mission': r.mission and {'state': r.mission['state'], 'points': [
+                    {'n': p['n'], 'name': p['name'], 'done': p['done'], 'pos': self.city.nodes[p['node']]} for p in r.mission['points']]},
                 'thoughts': list(r.thoughts)[:12]}
 
     def snapshot(self):
         delivered = sum(o['status'] == 'delivered' for o in self.orders.values())
         orders = []
         for o in self.orders.values():
-            orders.append({**o, 'pickup_name': self.place(o['pickup'])['name'], 'dropoff_name': self.place(o['dropoff'])['name']})
+            orders.append({**o, 'pickup_name': self.name_of(o, 'pickup'), 'dropoff_name': self.name_of(o, 'dropoff')})
         status = 'completed' if self.completed else 'running' if self.running else 'paused' if self.time else 'ready'
         return {
             'clock': self.clock(), 'time': round(self.time), 'running': self.running, 'speed': self.speed, 'status': status,
             'robots': [self.robot_public(r) for r in self.robots],
             'orders': orders,
+            'places': [{**p, 'pos': self.city.nodes[p['node']]} for p in self.city.places.values()],
             'hazards': [h.public(self.time) for h in self.hazards.values()],
             'knowledge': [{'hazard': k['hazard'], 'pos': k['pos'], 'street': k['street'], 'kind': k['kind'], 'blocks': k['blocks'],
                            'by': k['by'], 'message': k['message'],

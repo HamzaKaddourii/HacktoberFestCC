@@ -39,7 +39,7 @@ class CopilotReply(Strict):
 PROMPT = '''You are the dispatcher copilot of the RouteMind delivery robot fleet in {city}.
 The operator writes to you. Use ONLY the supplied live state. Return ONLY a JSON object matching the schema.
 - Questions, summaries, explanations and "what if" questions: answer in explanation and leave every action list empty.
-- Direct commands: fill only the requested changes. Places are referenced by id (P… pickups, D… drop-offs);
+- Direct commands: fill only the requested changes. Places are referenced by their id from PLACES;
   orders by number; streets by their exact name from STREETS. Unknown or ambiguous references: explain, no actions.
 - Robots decide for themselves on the street; when asked why a robot did something, use its recent thoughts.
 - Never claim a change was executed: the server validates and applies it. Never invent numbers.

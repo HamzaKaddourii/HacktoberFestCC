@@ -1,4 +1,4 @@
-import { BatteryLow, Brain, Camera, Cpu, MapPin, Package, Radar, Radio, Satellite, ShieldAlert } from 'lucide-react';
+import { BatteryLow, Brain, Camera, Cpu, MapPin, Package, Play, Radar, Radio, Route, Satellite, ShieldAlert } from 'lucide-react';
 import type { FleetState, Robot, Thought } from '../types';
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -32,9 +32,12 @@ function ThoughtCard({ t }: { t: Thought }) {
   );
 }
 
-type Props = { robot: Robot; ai: FleetState['ai']; busy: boolean; onLowBattery: (id: string) => void };
+type Props = {
+  robot: Robot; ai: FleetState['ai']; busy: boolean; onLowBattery: (id: string) => void;
+  onPlanRoute: (id: string) => void; onStartRoute: (id: string) => void;
+};
 
-export default function BrainPanel({ robot: r, ai, busy, onLowBattery }: Props) {
+export default function BrainPanel({ robot: r, ai, busy, onLowBattery, onPlanRoute, onStartRoute }: Props) {
   const cam = r.sensors.camera;
   const lidar = r.sensors.lidar;
   const next = r.stops[0];
@@ -47,6 +50,10 @@ export default function BrainPanel({ robot: r, ai, busy, onLowBattery }: Props) 
           <h2>Robot brain</h2>
           <span className="robot-tag" style={{ '--c': r.color } as React.CSSProperties}>{r.id} · {r.name}</span>
           <span className={'status-pill ' + r.status}><i className="dot" />{r.status}{r.wait_left !== null ? ` · ${r.wait_left}s` : ''}</span>
+        </div>
+        <div className="brain-actions">
+          {r.status === 'planned' && <button className="button primary small" disabled={busy} onClick={() => onStartRoute(r.id)}><Play size={12} />Start route</button>}
+          <button className="button secondary small" disabled={busy} onClick={() => onPlanRoute(r.id)}><Route size={12} />{r.mission ? 'Edit route' : 'Plan route'}</button>
         </div>
         <span className={'brain-mode ' + (ai.available ? 'ai' : 'reflex')} title={ai.reason}>
           {ai.available ? <><Brain size={12} /> AI agent · {ai.model}</> : <><Cpu size={12} /> Reflex rules · AI offline</>}
@@ -79,7 +86,7 @@ export default function BrainPanel({ robot: r, ai, busy, onLowBattery }: Props) 
               </> : <b className="clear">No obstacle in range</b>}
             </div>
           </div>
-          <div className="sensor"><Package size={14} /><div><span>Mission</span><b>{r.load.length}/{r.capacity} parcels on board</b><small>{next ? `${next.kind === 'pickup' ? 'Pick up' : 'Drop off'} #${next.order} at ${next.place} · ${next.metres} m` : r.status === 'idle' ? 'Docked, waiting for orders' : 'Heading to the hub'}</small></div></div>
+          <div className="sensor"><Package size={14} /><div><span>Mission</span><b>{r.mission ? `Drawn route · ${r.mission.points.filter((p) => p.done).length}/${r.mission.points.length} points · ${r.mission.state}` : `${r.load.length}/${r.capacity} parcels on board`}</b><small>{next ? `${next.kind === 'waypoint' ? 'Route point' : next.kind === 'pickup' ? `Pick up #${next.order}` : `Drop off #${next.order}`} · ${next.place} · ${next.metres} m` : r.status === 'idle' ? 'Docked, waiting for orders' : 'Heading to the hub'}</small></div></div>
           <div className="sensor battery">
             <BatteryLow size={14} />
             <div>

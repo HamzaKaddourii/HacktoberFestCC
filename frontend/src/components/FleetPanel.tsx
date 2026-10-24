@@ -19,7 +19,7 @@ export default function FleetPanel({ robots, selected, onSelect }: Props) {
               <span className="robot-badge">{r.id.slice(3)}</span>
               <div>
                 <b>{r.id} · {r.name}</b>
-                <span>{next ? `${next.kind === 'pickup' ? 'Pick up' : 'Drop off'} #${next.order} · ${next.place}` : r.status === 'idle' ? 'Docked' : r.status === 'charging' ? 'Charging at hub' : 'Returning to hub'}</span>
+                <span>{next ? `${next.kind === 'waypoint' ? 'Route point' : `${next.kind === 'pickup' ? 'Pick up' : 'Drop off'} #${next.order}`} · ${next.place}` : r.status === 'idle' ? 'Docked' : r.status === 'charging' ? 'Charging at hub' : 'Returning to hub'}</span>
               </div>
               <div className="robot-side">
                 <span className={'status-pill ' + r.status}><i className="dot" />{r.status}</span>

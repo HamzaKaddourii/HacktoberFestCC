@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowRight, Ban, Bot, Brain, CircleHelp, Construction, Cpu, Download, Droplets, Eye, Footprints, LayoutDashboard,
-  Map as MapIcon, Megaphone, Network, Package, Pause, Play, Radio, RotateCcw, Route, Sparkles, TriangleAlert, Truck, X,
+  ArrowRight, Ban, Box as Cube, Bot, Brain, CircleHelp, Construction, Cpu, Download, Droplets, Eye, Footprints, LayoutDashboard,
+  Map as MapIcon, MapPin, Megaphone, Network, Package, Pause, Play, Radio, RotateCcw, Route, Sparkles, TriangleAlert, Truck, X,
 } from 'lucide-react';
 import { api, km } from './api';
 import ActivityPanel from './components/ActivityPanel';
@@ -10,8 +10,13 @@ import CopilotPanel from './components/CopilotPanel';
 import DispatchPanel from './components/DispatchPanel';
 import FleetMap from './components/FleetMap';
 import FleetPanel from './components/FleetPanel';
+import RouteBuilder, { type RouteDraft, type RoutePoint } from './components/RouteBuilder';
 import OrdersPanel from './components/OrdersPanel';
+import { PlaceModal, PlacesPanel } from './components/PlacesPanel';
 import type { CityMap, FleetState, LatLon } from './types';
+
+// The 3D view (MapLibre) is only downloaded when someone switches to it.
+const FleetMap3D = lazy(() => import('./components/FleetMap3D'));
 
 const TOOLS = [
   { kind: 'pedestrians', label: 'Pedestrians', icon: Footprints },
@@ -38,6 +43,10 @@ export default function App() {
   const [armed, setArmed] = useState<string | null>(null);
   const [announced, setAnnounced] = useState(false);
   const [showGraph, setShowGraph] = useState(true);
+  const [view3d, setView3d] = useState(false);
+  const [allRoutes, setAllRoutes] = useState(false);
+  const [placeDraft, setPlaceDraft] = useState<{ pos?: LatLon; id?: string } | null>(null);
+  const [routeDraft, setRouteDraft] = useState<RouteDraft | null>(null);
   const [help, setHelp] = useState(false);
   const mutation = useRef(false);
   const version = useRef(0);
@@ -83,20 +92,26 @@ export default function App() {
   }, [state, autoFocus, selected]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setArmed(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setArmed(null);
+      setRouteDraft(null);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const action = useCallback(async (url: string, body: unknown = {}, method?: string) => {
+  const action = useCallback(async (url: string, body: unknown = {}, method?: string): Promise<FleetState | undefined> => {
     if (mutation.current) return;
     mutation.current = true;
     version.current++;
     setBusy(true);
     setError('');
     try {
-      setState(await api<FleetState>(url, body, method));
+      const next = await api<FleetState>(url, body, method);
+      setState(next);
       setOnline(true);
+      return next;
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -105,10 +120,104 @@ export default function App() {
     }
   }, []);
 
+  // While a route is being drawn for a robot, map clicks add its points.
+  const mapArmed = routeDraft ? 'route' : armed;
+  const routeRobot = routeDraft ? state?.robots.find((r) => r.id === routeDraft.robot) : undefined;
+
+  const arm = (kind: string | null) => {
+    setRouteDraft(null);
+    setArmed(kind);
+  };
+
+  const editRoute = (points: RoutePoint[]) => setRouteDraft((d) => d && { ...d, points, saved: false });
+
+  const openRoute = (rid: string) => {
+    const r = state?.robots.find((x) => x.id === rid);
+    setArmed(null);
+    setAutoFocus(false);
+    setSelected(rid);
+    const points = (r?.mission?.points ?? []).filter((p) => !p.done).map((p) => ({ lat: p.pos[0], lon: p.pos[1], name: p.name }));
+    setRouteDraft({ robot: rid, points, saved: r?.mission?.state === 'saved' });
+    scrollTo('map-panel');
+  };
+
+  const saveRoute = async () => {
+    if (!routeDraft) return;
+    const waypoints = routeDraft.points.map((p) => (p.place ? { place: p.place } : { lat: p.lat, lon: p.lon, name: p.name.trim() }));
+    const next = await action(`/robots/${routeDraft.robot}/mission`, { waypoints });
+    if (next) setRouteDraft((d) => d && { ...d, saved: true });
+  };
+
+  const startRoute = async (rid: string) => {
+    const next = await action(`/robots/${rid}/mission/start`);
+    if (next) setRouteDraft(null);
+  };
+
   const place = (p: LatLon) => {
+    if (routeDraft) {
+      editRoute([...routeDraft.points, { lat: p[0], lon: p[1], name: `Point ${routeDraft.points.length + 1}` }]);
+      return;
+    }
     if (!armed) return;
+    if (armed === 'point') {
+      setArmed(null);
+      setPlaceDraft({ pos: p });
+      return;
+    }
     action('/hazards', { lat: p[0], lon: p[1], kind: armed, announced });
   };
+
+  const placeClick = (id: string) => {
+    const p = state?.places.find((x) => x.id === id);
+    if (!p) return;
+    if (routeDraft) {
+      editRoute([...routeDraft.points, { place: p.id, name: p.name }]);
+      return;
+    }
+    if (!armed) setPlaceDraft({ id });
+  };
+
+  // Delete every point on the map; points used by unfinished orders are kept.
+  const clearPoints = async () => {
+    if (!state || mutation.current) return;
+    const used = new Set(state.orders.filter((o) => o.status !== 'delivered').flatMap((o) => [o.pickup, o.dropoff]));
+    const mine = state.places;
+    const removable = mine.filter((p) => !used.has(p.id));
+    if (!removable.length) {
+      setError('Every point is used by an unfinished order, so they were kept.');
+      return;
+    }
+    if (!window.confirm(`Delete ${removable.length} point(s)? Points used by unfinished orders are kept. Restarting the server brings the original map places back.`)) return;
+    mutation.current = true;
+    version.current++;
+    setBusy(true);
+    setError('');
+    try {
+      let next: FleetState | undefined;
+      for (const p of removable) next = await api<FleetState>(`/places/${p.id}`, undefined, 'DELETE');
+      if (next) setState(next);
+      if (mine.length > removable.length) setError(`${mine.length - removable.length} point(s) kept because unfinished orders use them.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      mutation.current = false;
+      setBusy(false);
+    }
+  };
+
+  const savePlace = (name: string, role: string) => {
+    const draft = placeDraft;
+    setPlaceDraft(null);
+    if (draft?.id) action(`/places/${draft.id}`, { name, role }, 'PATCH');
+    else if (draft?.pos) action('/places', { lat: draft.pos[0], lon: draft.pos[1], name, role });
+  };
+
+  // Numbered markers for the route being drawn.
+  const draftMarkers = (routeDraft?.points ?? []).map((p, i) => {
+    const pos = p.place ? state?.places.find((x) => x.id === p.place)?.pos : p.lat !== undefined && p.lon !== undefined ? [p.lat, p.lon] as LatLon : undefined;
+    return pos ? { pos, n: i + 1 } : null;
+  }).filter((m): m is { pos: LatLon; n: number } => m !== null);
+  const draftPlaces = (routeDraft?.points ?? []).flatMap((p) => (p.place ? [p.place] : []));
 
   const exportMission = () => {
     if (!state) return;
@@ -178,9 +287,12 @@ export default function App() {
                   </div>
                   <div className="map-toolbar">
                     <div className="tools">
+                      <button className={'tool point' + (armed === 'point' ? ' selected' : '')} onClick={() => arm(armed === 'point' ? null : 'point')} title="Add your own pickup or drop-off point">
+                        <MapPin size={13} />Add point
+                      </button>
                       <span className="tools-label">Drop an obstacle:</span>
                       {TOOLS.map((t) => (
-                        <button key={t.kind} className={'tool' + (armed === t.kind ? ' selected' : '')} onClick={() => setArmed(armed === t.kind ? null : t.kind)} title={`Place: ${t.label}`}>
+                        <button key={t.kind} className={'tool' + (armed === t.kind ? ' selected' : '')} onClick={() => arm(armed === t.kind ? null : t.kind)} title={`Place: ${t.label}`}>
                           <t.icon size={13} />{t.label}
                         </button>
                       ))}
@@ -189,12 +301,30 @@ export default function App() {
                       <button className={'toggle' + (!announced ? ' selected' : '')} onClick={() => setAnnounced(false)} title="Robots must discover it with their sensors"><Eye size={12} />Surprise</button>
                       <button className={'toggle' + (announced ? ' selected' : '')} onClick={() => setAnnounced(true)} title="The server knows in advance and re-routes the fleet"><Megaphone size={12} />City notice</button>
                       <button className={'toggle' + (showGraph ? ' selected' : '')} onClick={() => setShowGraph(!showGraph)} title="The street graph the robots read"><Network size={12} />Road graph</button>
+                      <button className={'toggle' + (allRoutes ? ' selected' : '')} onClick={() => setAllRoutes(!allRoutes)} title="Show every robot's route, or only the selected robot's"><Route size={12} />{allRoutes ? 'All routes' : `${robot.id} route`}</button>
+                      <button className={'toggle' + (view3d ? ' selected' : '')} onClick={() => setView3d(!view3d)} title="3D city with a camera that follows a robot"><Cube size={12} />{view3d ? '3D city' : '2D map'}</button>
                     </div>
                   </div>
                   <div className="map-wrap">
-                    <FleetMap map={map} state={state} selected={robot.id} onSelect={(id) => { setSelected(id); setAutoFocus(false); }}
-                      armed={armed} onPlace={place} onRemoveHazard={(id) => action(`/hazards/${id}`, undefined, 'DELETE')} showGraph={showGraph} />
-                    {tool && <div className="edit-hint">Click a street to place <b>{tool.label}</b> · {announced ? 'city notice: the server knows it' : 'surprise: robots must see it'} · Esc to stop</div>}
+                    {view3d && (
+                      <Suspense fallback={<div className="fleet-map map3d-loading">Loading 3D city…</div>}>
+                        <FleetMap3D map={map} state={state} selected={robot.id} onSelect={(id) => { setSelected(id); setAutoFocus(false); }} armed={mapArmed} onPlace={place}
+                          onPlaceClick={placeClick} allRoutes={allRoutes} building={!!routeDraft} draft={draftMarkers} chosen={draftPlaces} />
+                      </Suspense>
+                    )}
+                    {/* The 2D map stays mounted while hidden: unmounting Leaflet mid-animation throws. */}
+                    <div hidden={view3d}>
+                      <FleetMap map={map} state={state} selected={robot.id} onSelect={(id) => { setSelected(id); setAutoFocus(false); }}
+                        armed={!view3d ? mapArmed : null} onPlace={place} onRemoveHazard={(id) => action(`/hazards/${id}`, undefined, 'DELETE')} showGraph={showGraph}
+                        onPlaceClick={placeClick} allRoutes={allRoutes} building={!!routeDraft} draft={draftMarkers} chosen={draftPlaces} />
+                    </div>
+                    {routeDraft && routeRobot && (
+                      <RouteBuilder draft={routeDraft} robot={routeRobot} places={state.places} busy={busy} onChange={editRoute} onSave={saveRoute}
+                        onStart={() => startRoute(routeRobot.id)} onClose={() => setRouteDraft(null)}
+                        onCancelRoute={async () => { if (await action(`/robots/${routeRobot.id}/mission`, undefined, 'DELETE')) setRouteDraft(null); }} />
+                    )}
+                    {armed === 'point' && <div className="edit-hint">Click near a street corner to add a <b>point</b> · Esc to stop</div>}
+                    {tool && !routeDraft && <div className="edit-hint">Click a street to place <b>{tool.label}</b> · {announced ? 'city notice: the server knows it' : 'surprise: robots must see it'} · Esc to stop</div>}
                   </div>
                   <div className="map-legend">
                     <span><i className="legend-line" />Planned route</span>
@@ -216,16 +346,19 @@ export default function App() {
                     <label className="follow"><input type="checkbox" checked={autoFocus} onChange={(e) => setAutoFocus(e.target.checked)} />Follow decisions</label>
                   </div>
                 </section>
-                <BrainPanel robot={robot} ai={state.ai} busy={busy} onLowBattery={(id) => action(`/robots/${id}/battery`, { level: 24 })} />
+                <BrainPanel robot={robot} ai={state.ai} busy={busy} onLowBattery={(id) => action(`/robots/${id}/battery`, { level: 24 })}
+                  onPlanRoute={openRoute} onStartRoute={startRoute} />
                 <div className="lower-grid">
                   <OrdersPanel map={map} orders={state.orders} busy={busy} onSample={() => action('/mission/sample')}
-                    onAdd={(pickup, dropoff, priority) => action('/orders', { pickup, dropoff, priority })}
+                    newOrderLabel={`New route for ${robot.id}`} onNewOrder={() => openRoute(robot.id)}
                     onPriority={(id, priority) => action(`/orders/${id}/priority`, { priority })} />
                   <ActivityPanel events={state.events} robots={state.robots} />
                 </div>
               </div>
               <aside className="right-column">
                 <FleetPanel robots={state.robots} selected={robot.id} onSelect={(id) => { setSelected(id); setAutoFocus(false); }} />
+                <PlacesPanel places={state.places} orders={state.orders} adding={armed === 'point'} busy={busy} onClear={clearPoints} onEdit={(id) => setPlaceDraft({ id })}
+                  onAdd={() => { arm('point'); scrollTo('map-panel'); }} />
                 <DispatchPanel state={state} />
                 <CopilotPanel ai={state.ai} />
               </aside>
@@ -237,6 +370,11 @@ export default function App() {
           </>}
         </main>
       </div>
+      {placeDraft && state && (
+        <PlaceModal key={placeDraft.id ?? 'new'} busy={busy} place={placeDraft.id ? state.places.find((p) => p.id === placeDraft.id) : undefined}
+          onSave={savePlace} onClose={() => setPlaceDraft(null)}
+          onDelete={placeDraft.id ? () => { action(`/places/${placeDraft.id}`, undefined, 'DELETE'); setPlaceDraft(null); } : undefined} />
+      )}
       {help && (
         <div className="modal-backdrop" onClick={() => setHelp(false)}>
           <div className="modal panel" role="dialog" aria-modal="true" aria-label="Demo guide" onClick={(e) => e.stopPropagation()}>

@@ -1,6 +1,8 @@
 """Google GenAI connection shared by the robot agents and the dispatcher copilot."""
+import json
 import os
 import threading
+import time
 
 from google import genai
 from google.genai import types
@@ -39,17 +41,31 @@ class LLM:
         """Ask for JSON matching a Pydantic model and validate it. Raises on any failure."""
         json_schema = schema.model_json_schema()
         with self.slots:
-            try:
-                response = self.client.models.generate_content(
-                    model=self.model, contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type='application/json',
-                                                       response_json_schema=json_schema, temperature=0.3))
-            except Exception as exc:
-                # Some deployments don't expose structured generation for Gemma: fall back to plain JSON prompting.
-                if getattr(exc, 'code', None) != 400:
+            for attempt in range(2):
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.model, contents=prompt,
+                        config=types.GenerateContentConfig(response_mime_type='application/json',
+                                                           response_json_schema=json_schema, temperature=0.3))
+                    break
+                except Exception as exc:
+                    code = getattr(exc, 'code', None)
+                    if code == 400:
+                        # Some deployments don't expose structured generation for Gemma: plain JSON prompting.
+                        response = self.client.models.generate_content(model=self.model, contents=prompt)
+                        break
+                    if attempt == 0 and isinstance(code, int) and code >= 500:
+                        time.sleep(0.8)   # transient Google server error: one quick retry
+                        continue
                     raise
-                response = self.client.models.generate_content(model=self.model, contents=prompt)
-        text = (response.text or '').strip()
-        if text.startswith('```'):
-            text = text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
-        return schema.model_validate_json(text)
+        return schema.model_validate(extract_json(response.text or ''))
+
+
+def extract_json(text):
+    """The first JSON object in a reply, ignoring code fences and stray end-of-text tokens around it."""
+    text = text.replace('<|endoftext|>', '')
+    start = text.find('{')
+    if start < 0:
+        raise ValueError('No JSON object in the model reply.')
+    data, _ = json.JSONDecoder().raw_decode(text[start:])
+    return data

@@ -11,7 +11,7 @@ from . import copilot
 from .fleet import TICK_SECONDS, Fleet
 from .hazards import KINDS
 from .llm import LLM
-from .models import BatteryIn, Chat, ChatResponse, HazardIn, OrderIn, PriorityIn, SpeedIn
+from .models import BatteryIn, Chat, ChatResponse, HazardIn, MissionIn, OrderIn, PlaceIn, PlaceUpdate, PriorityIn, SpeedIn
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 llm = LLM()
@@ -38,6 +38,15 @@ async def lifespan(app):
 
 app = FastAPI(title='RouteMind AI', version='2.0.0', lifespan=lifespan,
               description='Simulated sidewalk delivery fleet on a real OpenStreetMap street network, with an AI agent in every robot.')
+
+
+@app.middleware('http')
+async def always_fresh_page(request, call_next):
+    # Browsers must re-check the dashboard page so a rebuilt frontend shows up on a normal reload.
+    response = await call_next(request)
+    if response.headers.get('content-type', '').startswith('text/html'):
+        response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 
 @app.exception_handler(ValueError)
@@ -73,6 +82,27 @@ def add_order(body: OrderIn):
         oid = fleet.add_order(body.pickup, body.dropoff, body.priority)
         fleet.event(f'Order #{oid} received', f"{fleet.place(body.pickup)['name']} → {fleet.place(body.dropoff)['name']}")
         fleet.dispatch(f'Order #{oid} received')
+        return state()
+
+
+@app.post('/api/places')
+def add_place(body: PlaceIn):
+    with fleet.lock:
+        fleet.add_place(body.lat, body.lon, body.name.strip(), body.role)
+        return state()
+
+
+@app.patch('/api/places/{pid}')
+def update_place(pid: str, body: PlaceUpdate):
+    with fleet.lock:
+        fleet.update_place(pid, body.name.strip() if body.name else None, body.role)
+        return state()
+
+
+@app.delete('/api/places/{pid}')
+def remove_place(pid: str):
+    with fleet.lock:
+        fleet.remove_place(pid)
         return state()
 
 
@@ -136,6 +166,30 @@ def clear_hazard(hid: int):
 def battery(rid: str, body: BatteryIn):
     with fleet.lock:
         fleet.set_battery(rid, body.level)
+        return state()
+
+
+@app.post('/api/robots/{rid}/mission')
+def plan_mission(rid: str, body: MissionIn):
+    for n, w in enumerate(body.waypoints, 1):
+        if not w.place and (w.lat is None or w.lon is None):
+            raise ValueError(f'Point {n} needs a place or a map position.')
+    with fleet.lock:
+        fleet.plan_mission(rid, [w.model_dump() for w in body.waypoints])
+        return state()
+
+
+@app.post('/api/robots/{rid}/mission/start')
+def start_mission(rid: str):
+    with fleet.lock:
+        fleet.start_mission(rid)
+        return state()
+
+
+@app.delete('/api/robots/{rid}/mission')
+def cancel_mission(rid: str):
+    with fleet.lock:
+        fleet.cancel_mission(rid)
         return state()
 
 

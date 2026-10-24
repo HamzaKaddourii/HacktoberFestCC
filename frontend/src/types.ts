@@ -31,8 +31,9 @@ export type Sensors = {
 export type Robot = {
   id: string; name: string; color: string; status: string; pos: LatLon; heading: number; battery: number;
   load: number[]; capacity: number; distance: number; street: string;
-  stops: { order: number; kind: 'pickup' | 'dropoff'; place: string; urgent: boolean; metres: number }[];
+  stops: { order: number | null; kind: 'pickup' | 'dropoff' | 'waypoint'; place: string; urgent: boolean; metres: number; pos: LatLon }[];
   path: LatLon[]; sensors: Sensors; wait_left: number | null; thoughts: Thought[];
+  mission: { state: 'saved' | 'running' | 'interrupted'; points: { n: number; name: string; done: boolean; pos: LatLon }[] } | null;
 };
 
 export type Order = {
@@ -56,7 +57,7 @@ export type FleetEvent = { id: number; time: string; title: string; detail: stri
 
 export type FleetState = {
   clock: string; time: number; running: boolean; speed: number; status: 'ready' | 'running' | 'paused' | 'completed';
-  robots: Robot[]; orders: Order[]; hazards: Hazard[]; knowledge: Knowledge[]; events: FleetEvent[];
+  robots: Robot[]; orders: Order[]; places: Place[]; hazards: Hazard[]; knowledge: Knowledge[]; events: FleetEvent[];
   metrics: {
     delivered: number; orders: number; fleet_distance: number; active: number;
     ai_decisions: number; reflex_decisions: number; avg_ai_ms: number | null;

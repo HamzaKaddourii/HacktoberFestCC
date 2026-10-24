@@ -149,6 +149,92 @@ h2 { font-size: 13px; font-weight: 600; letter-spacing: -.1px; }
 .hazard-pin.sidewalk_obstacle.reported, .hazard-pin.sidewalk_obstacle.seen { background: #b0894a; }
 .hazard-pin.stale { width: 20px; height: 20px; border: 2px dashed #8b9aaf; color: #8b9aaf; background: #8b9aaf14; }
 
+/* 3D city view */
+.map3d { position: relative; }
+.map3d-loading { display: grid; place-items: center; color: #8b9aaf; font-size: 12px; }
+.map3d-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; z-index: 5; }
+.map3d-controls button { font-size: 10px; padding: 7px 10px; border-radius: 6px; background: #121a25e6; border: 1px solid #334155; color: #c4cede; }
+.map3d-controls button.selected { background: #b8ef71; border-color: #b8ef71; color: #1b2a16; font-weight: 600; }
+.robot-label { --c: #b8ef71; font-size: 10px; font-weight: 700; color: #0e151e; background: var(--c); border-radius: 5px; padding: 2px 6px; white-space: nowrap; cursor: pointer; box-shadow: 0 2px 10px #0009; }
+.robot-label.selected { outline: 2px solid #fff; }
+.robot-label.thinking { background: #a78bfa; color: #fff; animation: pulse 1s infinite; }
+.robot-label.waiting { background: #ecb971; }
+.maplibregl-ctrl-group { background: #182231 !important; border: 1px solid #2c3747; }
+.maplibregl-ctrl-group button + button { border-top-color: #2c3747 !important; }
+.maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(.85); }
+.maplibregl-ctrl-attrib { background: #0d131ccc !important; color: #7f8ea3 !important; font-size: 9px; }
+.maplibregl-ctrl-attrib a { color: #a9c2e6 !important; }
+
+/* points & selected route */
+.tool.point { border-color: #b8ef7140; color: #d6f5b0; }
+.tool.point svg { color: #b8ef71; }
+.tool.point.selected { background: #b8ef7122; border-color: #b8ef71; color: #e6ffc9; }
+.place-pin.custom { box-shadow: 0 0 0 2px #0e151e, 0 0 0 3.5px #b8ef71; }
+.stop-pin { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; border: 2px solid #0e151e; box-shadow: 0 2px 10px #000a; }
+.stop-pin.pickup { background: #f2c46d; color: #2a1e08; }
+.stop-pin.dropoff { background: #d892e6; color: #2a0f30; }
+.stop-pin.urgent { box-shadow: 0 0 0 2px #0e151e, 0 0 0 4px #f08a7a; }
+.places-panel .footnote { padding-bottom: 8px; color: #c9f592; }
+.place-list { max-height: 260px; overflow: auto; padding: 0 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.place-row { justify-content: flex-start; gap: 10px; text-align: left; padding: 7px 8px; border-radius: 7px; border: 1px solid transparent; }
+.place-row:hover { background: #18212d; border-color: #263040; }
+.place-row .place-pin { width: 20px; height: 20px; flex-shrink: 0; }
+.place-row > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.place-row b { font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-row span { font-size: 9px; color: #7d8ba0; }
+.add-button.armed { background: #b8ef71; color: #1b2a16; }
+.places-actions { display: flex; align-items: center; gap: 8px; }
+.modal input { border: 1px solid #35465a; background: #182333; border-radius: 6px; padding: 10px; color: #dbe6f4; outline: none; }
+.modal input:focus { border-color: #b8ef71; }
+.button.danger { margin-top: 8px; width: 100%; background: #e5534b18; border-color: #e5534b60; color: #ffb4ab; }
+
+/* new order on the map */
+.place-pin.eligible { opacity: 1; transform: scale(1.35); box-shadow: 0 0 0 2px #0e151e, 0 0 14px currentColor; animation: pulse 1.2s infinite; cursor: pointer; }
+.place-pin.dim { opacity: .15; }
+.place-pin.chosen { opacity: 1; transform: scale(1.45); box-shadow: 0 0 0 2px #0e151e, 0 0 0 4px #b8ef71, 0 0 16px #b8ef71; }
+.order-builder { position: absolute; left: 12px; bottom: 12px; z-index: 950; width: 290px; max-width: calc(100% - 24px); background: #121a25f2; border: 1px solid #3a4a5e; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 40px #000a; }
+.ob-head { display: flex; align-items: center; gap: 8px; color: #c9f592; }
+.ob-head b { font-size: 12px; color: #e9eef5; }
+.ob-head button { margin-left: auto; color: #8b9aaf; }
+.ob-step { justify-content: flex-start; gap: 10px; text-align: left; padding: 8px; border-radius: 8px; border: 1px solid #2a3442; background: #172130; }
+.ob-step.active { border-color: #b8ef71; background: #b8ef710f; }
+.ob-step > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ob-step small { font-size: 9px; color: #8b9aaf; letter-spacing: .5px; text-transform: uppercase; }
+.ob-step b { font-size: 11px; font-weight: 500; color: #dbe5f3; line-height: 1.4; }
+.ob-step.active:not(.done) b { color: #c9f592; }
+.ob-num { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.ob-step.pickup .ob-num { background: #f2c46d; color: #2a1e08; }
+.ob-step.dropoff .ob-num { background: #d892e6; color: #2a0f30; }
+.ob-priority { display: flex; border: 1px solid #303b4a; border-radius: 7px; overflow: hidden; }
+.ob-priority button { flex: 1; font-size: 10px; padding: 7px; color: #8f9db1; }
+.ob-priority button.selected { background: #b8ef7118; color: #c9f592; }
+.ob-priority button.selected.urgent { background: #f2b67520; color: #f2b675; }
+.order-builder .button { width: 100%; }
+.empty-queue .button.secondary { margin-top: -2px; }
+
+/* drawn robot routes */
+.stop-pin.waypoint { background: #b8ef71; color: #1b2a16; }
+.stop-pin.draft { background: #ffffff; color: #0e151e; border: 2px dashed #0e151e; }
+.route-builder { --c: #b8ef71; width: 320px; border-color: var(--c); }
+.route-builder .ob-head { color: var(--c); }
+.rb-hint { font-size: 10px; line-height: 1.5; color: #a9b6c8; }
+.rb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 230px; overflow: auto; }
+.rb-list li { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 7px; background: #172130; border: 1px solid #2a3442; }
+.rb-list li .ob-num { background: var(--c); color: #0e151e; width: 20px; height: 20px; font-size: 10px; }
+.rb-list li > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rb-list li b { font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-list li input { background: #0e1621; border: 1px solid #354154; border-radius: 4px; color: #dbe5f3; font-size: 11px; padding: 3px 5px; width: 100%; }
+.rb-list li small { font-size: 9px; color: #7d8ba0; }
+.rb-list li button { color: #8b9aaf; width: 20px; height: 20px; border-radius: 4px; }
+.rb-list li button:hover:not(:disabled) { background: #263040; color: #dbe5f3; }
+.rb-empty { justify-content: center; font-size: 10px; color: #7d8ba0; }
+.rb-end { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 9px; color: #7d8ba0; padding-left: 4px; }
+.rb-clear { font-size: 10px; color: #f6b0a5; border: 1px solid #f08a7a50; background: #f08a7a12; border-radius: 5px; padding: 4px 8px; }
+.rb-saved { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #c9f592; }
+.route-builder .button.danger { margin-top: 0; }
+.brain-actions { display: flex; gap: 6px; margin-left: auto; }
+.status-pill.planned { color: #c9f592; background: #b8ef7114; }
+
 /* ---------- robot brain ---------- */
 .brain-panel { background: linear-gradient(160deg, #161a2b, #111923 55%); }
 .brain-panel .heading-title > svg { color: #c4a5f5; }

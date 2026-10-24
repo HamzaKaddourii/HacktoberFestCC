@@ -42,6 +42,7 @@ class CityMap:
             self.graph.add_edge(a, b, length=length)
         self.hub = data['hub']['node']
         self.places = {p['id']: p for p in data['places']}
+        self.custom = 0            # counter for points added on the dashboard
 
     @classmethod
     def load(cls, path=DEFAULT_MAP):
@@ -113,6 +114,17 @@ class CityMap:
 
     def path_length(self, path):
         return sum(self.length(a, b) for a, b in zip(path, path[1:]))
+
+    def add_place(self, lat, lon, name, role):
+        """A point the operator clicked, snapped to the closest intersection so robots can reach it."""
+        a, b, along, lateral = self.nearest_edge(lat, lon)
+        if lateral > 60:
+            raise Unreachable('Click closer to a street.')
+        node = a if along <= self.length(a, b) / 2 else b
+        self.custom += 1
+        pid = f'X{self.custom}'
+        self.places[pid] = {'id': pid, 'role': role, 'name': name, 'kind': 'custom point', 'node': node}
+        return pid
 
     # --- map reading ----------------------------------------------------
     def streets(self, path):

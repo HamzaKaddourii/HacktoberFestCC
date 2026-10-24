@@ -62,10 +62,15 @@ type Props = {
   armed: string | null;
   onPlace: (p: LatLon) => void;
   onRemoveHazard: (id: number) => void;
+  onPlaceClick: (id: string) => void;
   showGraph: boolean;
+  allRoutes: boolean;
+  building: boolean;                          // a route is being drawn: every point is clickable
+  draft: { pos: LatLon; n: number }[];
+  chosen: string[];
 };
 
-export default function FleetMap({ map, state, selected, onSelect, armed, onPlace, onRemoveHazard, showGraph }: Props) {
+export default function FleetMap({ map, state, selected, onSelect, armed, onPlace, onRemoveHazard, onPlaceClick, showGraph, allRoutes, building, draft, chosen }: Props) {
   const streets = useMemo(() => map.streets.map((s) => s.geometry), [map]);
   const [tiles, setTiles] = useState(0);
   const known = new Set(state.knowledge.map((k) => k.hazard));
@@ -88,20 +93,32 @@ export default function FleetMap({ map, state, selected, onSelect, armed, onPlac
         eventHandlers={{ tileerror: () => setTiles((t) => Math.min(t + 1, TILES.length - 1)) }} />
       {showGraph && <Polyline positions={streets} interactive={false} pathOptions={{ color: '#6f8bab', weight: 1.6, opacity: 0.45 }} />}
 
-      {state.robots.map((r) => r.path.length > 1 && (
+      {state.robots.filter((r) => r.path.length > 1 && (allRoutes || r.id === selected)).map((r) => (
         <Polyline key={'path' + r.id} positions={r.path} interactive={false}
-          pathOptions={{ color: r.color, weight: r.id === selected ? 4 : 2.5, opacity: r.id === selected ? 0.95 : 0.6, dashArray: '7 7' }} />
+          pathOptions={{ color: r.color, weight: r.id === selected ? 4.5 : 2.5, opacity: r.id === selected ? 0.95 : 0.5, dashArray: '7 7' }} />
       ))}
       {state.robots.filter((r) => !['idle', 'charging'].includes(r.status)).map((r) => (
         <Polygon key={'cone' + r.id} positions={cameraCone(r.pos, r.heading)} interactive={false}
           pathOptions={{ color: r.sensors.camera ? '#f3b66a' : r.color, weight: 1, opacity: 0.55, fillOpacity: r.sensors.camera ? 0.25 : 0.07 }} />
       ))}
 
-      {map.places.map((p) => (
-        <Marker key={p.id} position={p.pos} icon={icon(`place:${p.role}:${activePlaces.has(p.id)}`,
-          `<div class="place-pin ${p.role}${activePlaces.has(p.id) ? ' active' : ''}">${p.role === 'pickup' ? 'P' : 'D'}</div>`, 18, 'place-icon')}>
-          <Tooltip direction="top" offset={[0, -8]}><b>{p.name}</b><br />{p.id} · {p.kind} · {p.role === 'pickup' ? 'pickup' : 'drop-off'}</Tooltip>
-        </Marker>
+      {state.places.map((p) => {
+        const look = chosen.includes(p.id) ? ' chosen' : building ? ' eligible' : activePlaces.has(p.id) ? ' active' : '';
+        return (
+          <Marker key={p.id} position={p.pos} zIndexOffset={look === ' eligible' || look === ' chosen' ? 700 : 0} eventHandlers={{ click: () => onPlaceClick(p.id) }}
+            icon={icon(`place:${p.role}:${look}:${p.kind === 'custom point'}`,
+              `<div class="place-pin ${p.role}${look}${p.kind === 'custom point' ? ' custom' : ''}">${p.role === 'pickup' ? 'P' : 'D'}</div>`, 18, 'place-icon')}>
+            <Tooltip direction="top" offset={[0, -8]}><b>{p.name}</b><br />{p.id} · {p.kind} · {p.role === 'pickup' ? 'pickup' : 'drop-off'} · {building ? 'click to add to the route' : 'click to edit'}</Tooltip>
+          </Marker>
+        );
+      })}
+      {draft.map((d) => (
+        <Marker key={`draft${d.n}`} position={d.pos} zIndexOffset={900} interactive={false}
+          icon={icon(`draft:${d.n}`, `<div class="stop-pin draft">${d.n}</div>`, 24, 'stop-icon')} />
+      ))}
+      {!building && state.robots.find((r) => r.id === selected)?.stops.map((stop, i) => (
+        <Marker key={`stop${stop.order}${stop.kind}`} position={stop.pos} zIndexOffset={800} interactive={false}
+          icon={icon(`stop:${i + 1}:${stop.kind}:${stop.urgent}`, `<div class="stop-pin ${stop.kind}${stop.urgent ? ' urgent' : ''}">${i + 1}</div>`, 24, 'stop-icon')} />
       ))}
       <Marker position={map.hub.pos} icon={icon('hub', '<div class="hub-pin">⚡</div>', 26, 'hub-icon')}>
         <Tooltip direction="top" offset={[0, -12]}><b>{map.hub.name}</b><br />Charging and dispatch hub</Tooltip>
