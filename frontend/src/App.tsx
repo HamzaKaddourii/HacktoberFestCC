@@ -1,89 +1,260 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, ArrowDownRight, ArrowRight, Battery, Bot, Box, Check, ChevronRight, CircleHelp, Clock3, Compass, Download, LayoutDashboard, Map, Navigation, Pause, Play, Plus, Radio, RotateCcw, Route, Send, ShieldCheck, Sparkles, TriangleAlert, X, Zap } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ArrowRight, Ban, Bot, Brain, CircleHelp, Construction, Cpu, Download, Droplets, Eye, Footprints, LayoutDashboard,
+  Map as MapIcon, Megaphone, Network, Package, Pause, Play, Radio, RotateCcw, Route, Sparkles, TriangleAlert, Truck, X,
+} from 'lucide-react';
+import { api, km } from './api';
+import ActivityPanel from './components/ActivityPanel';
+import BrainPanel from './components/BrainPanel';
+import CopilotPanel from './components/CopilotPanel';
+import DispatchPanel from './components/DispatchPanel';
+import FleetMap from './components/FleetMap';
+import FleetPanel from './components/FleetPanel';
+import OrdersPanel from './components/OrdersPanel';
+import type { CityMap, FleetState, LatLon } from './types';
 
-type CellPos = [number, number];
-type Delivery = {station:string; priority:string; status:string};
-type Warehouse = {width:number;height:number;walls:CellPos[];shelves:number[][];stations:Record<string,CellPos>;base:CellPos;corridors:Record<string,CellPos[]>};
-type State = {position:CellPos;trail:CellPos[];battery:number;status:string;deliveries:Delivery[];obstacles:CellPos[];path:CellPos[];order:string[];unreachable:string[];events:{id:number;time:string;title:string;detail:string;kind:string}[];comparison:{before:number;after:number;reason:string}|null;ai:{available:boolean;model:string;reason:string};analytics:{completed:number;pending:number;distance:number;remaining:number;eta:number;baseline:number;optimized:number;replans:number;reduction:number;progress:number}};
-type Message = {role:string;text:string};
-const same = (a:CellPos,b:CellPos) => a[0]===b[0]&&a[1]===b[1];
-async function api<T>(url:string,body?:unknown):Promise<T> {
-  const res=await fetch('/api'+url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data=await res.json();
-  if(!res.ok) throw new Error(typeof data.detail==='string'?data.detail:'Please check the request and try again.');
-  return data;
+const TOOLS = [
+  { kind: 'pedestrians', label: 'Pedestrians', icon: Footprints },
+  { kind: 'parked_vehicle', label: 'Parked van', icon: Truck },
+  { kind: 'roadworks', label: 'Roadworks', icon: Construction },
+  { kind: 'road_closure', label: 'Street closed', icon: Ban },
+  { kind: 'sidewalk_obstacle', label: 'Small obstacle', icon: Package },
+  { kind: 'flooding', label: 'Flooding', icon: Droplets },
+];
+const SPEEDS = [1, 4, 8, 16, 30];
+
+function Metric({ icon, label, value, detail, tone }: { icon: React.ReactNode; label: string; value: React.ReactNode; detail: string; tone: string }) {
+  return <div className="stat-card"><div className="stat-top"><span>{label}</span><i className={tone}>{icon}</i></div><strong>{value}</strong><p>{detail}</p></div>;
 }
 
-export default function App(){
-  const [state,setState]=useState<State|null>(null), [map,setMap]=useState<Warehouse|null>(null);
-  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[online,setOnline]=useState(false);
-  const [editing,setEditing]=useState(false),[modal,setModal]=useState(false),[station,setStation]=useState('A'),[priority,setPriority]=useState('normal');
-  const [view,setView]=useState('overview'),[help,setHelp]=useState(false),[input,setInput]=useState(''),[chatBusy,setChatBusy]=useState(false);
-  const [messages,setMessages]=useState<Message[]>([]);
-  const mutation=useRef(false),requestVersion=useRef(0),chatEnd=useRef<HTMLDivElement>(null);
-  useEffect(()=>{let stopped=false;let timer:ReturnType<typeof setTimeout>;
-    const poll=async()=>{try{if(!mutation.current){const version=requestVersion.current;const s=await api<State>('/state');if(!stopped&&!mutation.current&&version===requestVersion.current){setState(s);setOnline(true);}}}catch{if(!stopped)setOnline(false);}finally{if(!stopped)timer=setTimeout(poll,200);}};
-    api<Warehouse>('/map').then(setMap).catch(()=>setError('Backend unavailable. Start FastAPI on port 8000.'));
-    poll();return()=>{stopped=true;clearTimeout(timer);};},[]);
-  useEffect(()=>{if(online&&!map)api<Warehouse>('/map').then(m=>{setMap(m);setError('');}).catch(()=>{});},[online,map]);
-  useEffect(()=>{chatEnd.current?.scrollIntoView({block:'nearest',behavior:'smooth'});},[messages]);
-  const action=useCallback(async(url:string,body:unknown={})=>{if(mutation.current)return;mutation.current=true;requestVersion.current++;setBusy(true);setError('');try{setState(await api<State>(url,body));setOnline(true);}catch(e){setError((e as Error).message);}finally{mutation.current=false;setBusy(false);}},[]);
-  const send=async(text=input)=>{if(!text.trim()||chatBusy)return;setInput('');setMessages(m=>[...m,{role:'user',text}]);setChatBusy(true);try{const r=await api<{available:boolean;message:string;applied:boolean}>('/ai/chat',{message:text});setMessages(m=>[...m,{role:r.available?'assistant':'system',text:r.message}]);}catch(e){setMessages(m=>[...m,{role:'system',text:(e as Error).message}]);}finally{setChatBusy(false);}};
-  const exportMission=()=>{if(!state)return;const blob=new Blob([JSON.stringify({simulation:true,exported_at:new Date().toISOString(),...state},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='routemind-mission.json';a.click();URL.revokeObjectURL(url);};
-  const a=state?.analytics;
-  const corridorBlocked=map?.corridors['A-C'].some(c=>state?.obstacles.some(b=>same(c,b)));
-  return <div className="app-shell">
-    <aside className="rail"><div className="brand-mark"><Route size={25}/></div><div className="rail-links">{[{id:'overview',icon:LayoutDashboard,label:'Mission overview'},{id:'map',icon:Map,label:'Warehouse map'},{id:'analytics',icon:Activity,label:'Mission analytics'}].map(n=><button key={n.id} aria-label={n.label} title={n.label} className={view===n.id?'active':''} onClick={()=>{setView(n.id);document.getElementById(n.id==='analytics'?'analytics':'map-panel')?.scrollIntoView({behavior:'smooth',block:'center'});}}><n.icon size={21}/></button>)}</div><button title="Demo guide" aria-label="Demo guide" onClick={()=>setHelp(true)}><CircleHelp size={21}/></button><div className="avatar">RM</div></aside>
-    <div className="workspace"><header className="topbar"><a className="wordmark" href="/">RouteMind <span>AI</span></a><span className="divider"/><span className="breadcrumb">Workspace <ChevronRight size={13}/> Mission control</span><div className="header-right"><span className="demo-badge">SIMULATION</span><span className="connection"><i className={online?'dot':'dot offline'}/>{online?'System online':'Connecting'}</span></div></header>
-    <main><div className="page-heading"><div><div className="eyebrow">OPERATIONS / WAREHOUSE 01</div><h1>Mission control<span className="live-pill"><i className="dot"/>Live</span></h1><p>Every delivery, a smarter route. Your autonomous fleet starts here.</p></div><button className="button secondary" onClick={exportMission} disabled={!state}><Download size={15}/>Export mission</button></div>
-    {error&&<div className="error" role="alert"><TriangleAlert size={17}/>{error}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={16}/></button></div>}
-    {!state||!map?<div className="loading"><Bot size={42}/><h2>Connecting to mission control</h2><p>Waiting for the FastAPI simulation at localhost:8000.</p></div>:<>
-      <section className="stats-grid"><Metric icon={<Box/>} label="Deliveries completed" value={<>{a!.completed}<small> / {state.deliveries.length}</small></>} detail={a!.pending+' deliveries in queue'} tone="green"/><Metric icon={<Route/>} label="Distance traveled" value={<>{a!.distance}<small> m</small></>} detail="Simulated travel distance" tone="blue"/><Metric icon={<Clock3/>} label="Remaining travel time" value={<>{a!.eta.toFixed(1)}<small> sec</small></>} detail="Excludes charging & blocked tasks" tone="purple"/><Metric icon={<Battery/>} label="Robot battery" value={<>{state.battery.toFixed(0)}<small> %</small></>} detail={state.status==='charging'?'Charging · auto-resume at 100%':state.battery>20?'Sufficient charge':'Returning to charging dock'} tone="amber"/></section>
-      <div className="dashboard-grid"><div className="main-column"><section id="map-panel" className="panel map-panel"><div className="panel-heading"><div className="heading-title"><Map size={18}/><h2>Live warehouse</h2><span className="subtle-tag">Floor 01</span></div><span className={'status-pill '+state.status}><i className="dot"/>{state.status}</span></div><div className="map-toolbar"><span><Radio size={14}/> RM-01 <b>Autonomous delivery robot</b></span><button className={editing?'toggle selected':'toggle'} onClick={()=>setEditing(!editing)}><Plus size={14}/>{editing?'Editing corridors':'Edit obstacles'}</button></div>
-      <div className={'warehouse '+(editing?'editing':'')}><WarehouseMap map={map} state={state} editing={editing} onCell={cell=>action('/obstacles',{cell,blocked:!state.obstacles.some(b=>same(b,cell))})}/><div className="map-scale"><span/> 5 m <b>1 cell = 1 simulated metre</b></div>{editing&&<div className="edit-hint">Click a clear grid cell to block it. Click a red cell to reopen.</div>}</div>
-      <div className="map-legend"><span><i className="legend-line"/>Planned route</span><span><i className="legend-dot"/>Delivery station</span><span><i className="legend-square"/>Storage area</span><span><i className="legend-square obstacle"/>Blocked corridor</span></div>
-      <div className="simulation-controls"><button className="button primary" disabled={busy||!online||state.status==='charging'} onClick={()=>action(state.status==='running'?'/simulation/pause':'/simulation/start')}>{state.status==='running'?<Pause size={16}/>:<Play size={16}/>} {state.status==='running'?'Pause robot':state.status==='paused'?'Resume robot':'Start robot'}</button><button className="button secondary" disabled={busy||!online} onClick={()=>action('/optimize')}><Sparkles size={16}/>Optimize route</button><button className="icon-button" aria-label="Reset simulation" title="Reset simulation" disabled={busy} onClick={()=>action('/simulation/reset')}><RotateCcw size={17}/></button><span className="control-note"><ShieldCheck size={14}/>A* obstacle avoidance</span></div></section>
-      <div className="lower-grid"><section className="panel" id="analytics"><div className="panel-heading"><div className="heading-title"><Activity size={17}/><h2>Route performance</h2></div><span className="subtle-tag">OR-Tools</span></div><div className="performance"><div><strong>{a!.reduction.toFixed(1)}<span>%</span></strong><p><ArrowDownRight size={15}/>{a!.reduction>=0?'Distance reduction':'Longer to honor priorities'}</p></div><div className="chart-wrap"><ResponsiveContainer width="100%" height={95}><BarChart data={[{name:'Baseline',distance:a!.baseline},{name:'Optimized',distance:a!.optimized}]} layout="vertical" margin={{left:0,right:20,top:5,bottom:5}}><XAxis type="number" hide/><YAxis type="category" dataKey="name" width={70} axisLine={false} tickLine={false} tick={{fill:'#a1aabd',fontSize:11}}/><Tooltip cursor={{fill:'#ffffff06'}} contentStyle={{background:'#18222f',border:'1px solid #334155',borderRadius:8}} formatter={(v)=>[`${v} m`,'Distance']}/><Bar dataKey="distance" barSize={12} radius={[0,3,3,0]}><Cell fill="#45526a"/><Cell fill="#b8ef71"/></Bar></BarChart></ResponsiveContainer></div></div><div className="metric-pair"><span>Baseline <b>{a!.baseline} m</b></span><span>Optimized <b>{a!.optimized} m</b></span><span>Replans <b>{a!.replans}</b></span></div><p className="footnote">Latest plan · same reachable stops & return to dock. Heuristic solution; priorities may increase distance.</p>{state.comparison&&<div className="replan-note"><Zap size={14}/><div>Remaining route: <b>{state.comparison.before} m → {state.comparison.after} m</b><small>{state.comparison.reason}</small></div></div>}</section>
-      <section className="panel events-panel"><div className="panel-heading"><div className="heading-title"><Activity size={17}/><h2>Live activity</h2></div><span className="subtle-tag">{state.events.length} events</span></div><div className="events">{state.events.map(e=><div className="event" key={e.id}><span className={'event-icon '+e.kind}>{e.kind==='success'?<Check size={12}/>:e.kind==='warning'?<TriangleAlert size={12}/>:<Radio size={12}/>}</span><div><b>{e.title}</b><p>{e.detail}</p></div><time>{new Date(e.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</time></div>)}</div></section></div>
-      <section className="panel scenario-panel"><div><div className="heading-title"><Zap size={17}/><h2>Put the plan to the test</h2><span className="subtle-tag">LIVE REPLANNING</span></div><p>Introduce an unexpected event. Watch the route adapt.</p></div><div className="scenario-buttons"><button className="button secondary" disabled={busy} onClick={()=>action('/corridors',{corridor:'A-C',blocked:!corridorBlocked})}><TriangleAlert size={14}/>{corridorBlocked?'Reopen A–C':'Block corridor A–C'}</button><button className="button secondary" disabled={busy||!state.deliveries.some(d=>d.status==='pending')} onClick={()=>{const d=state.deliveries.find(d=>d.station==='D'&&d.status==='pending')||state.deliveries.find(d=>d.status==='pending');if(d)action('/events/urgent',{station:d.station});}}><Zap size={14}/>Urgent delivery</button><button className="button secondary" disabled={busy} onClick={()=>action('/events/low-battery')}><Battery size={14}/>Low battery</button></div></section>
-      </div><aside className="right-column"><section className="panel queue-panel"><div className="panel-heading"><div className="heading-title"><Box size={17}/><h2>Delivery queue</h2><span className="count">{a!.pending}</span></div><button className="add-button" aria-label="Add delivery" onClick={()=>{setStation(Object.keys(map.stations).find(s=>!state.deliveries.some(d=>d.station===s))||'A');setModal(true);}}><Plus size={17}/></button></div><div className="mission-progress"><span>Mission progress <b>{a!.progress}%</b></span><div><i style={{width:a!.progress+'%'}}/></div></div><div className="queue-list">{!state.deliveries.length?<div className="empty-queue"><Box size={28}/><b>Your next mission starts here</b><p>Load five delivery requests to explore route optimization.</p><button className="button primary" disabled={busy} onClick={()=>action('/mission/sample')}><Plus size={14}/>Load sample mission</button></div>:state.deliveries.map(d=><div className={'delivery '+(d.status==='completed'?'done':'')} key={d.station}><span className="station-badge">{d.status==='completed'?<Check size={16}/>:d.station}</span><div><b>Station {d.station}</b><span>{d.status==='completed'?'Delivered':state.unreachable.includes(d.station)?'Unreachable · waiting':'Material delivery'}</span></div>{d.status==='completed'?<span className="delivered">Done</span>:<button disabled={busy} title={'Prioritize station '+d.station} className={'priority '+d.priority} onClick={()=>action('/events/urgent',{station:d.station})}>{d.priority==='urgent'&&<Zap size={10}/>} {d.priority}</button>}</div>)}</div>{state.order.length>0&&<div className="sequence"><span>PLANNED SEQUENCE</span><div><Navigation size={12}/>{state.order.map(s=><React.Fragment key={s}><ChevronRight size={12}/><b>{s}</b></React.Fragment>)}<ChevronRight size={12}/><span>Dock</span></div></div>}</section>
-      <section className="panel assistant-panel"><div className="panel-heading"><div className="heading-title"><Sparkles size={17}/><h2>Gemma AI Assistant</h2></div><i className={state.ai.available?'dot':'dot offline'}/></div><div className={'ai-status '+(!state.ai.available?'unavailable':'')}><span>{state.ai.available?'CONNECTED · GEMMA 4':'AI UNAVAILABLE'}</span><p>{state.ai.available?'Your logistics coordination copilot':state.ai.reason}</p></div><div className="chat-messages">{messages.length===0?<div className="chat-intro"><div className="ai-orb"><Sparkles size={23}/></div><h3>A little intelligence.<br/>A lot less distance.</h3><p>Ask about your mission, adjust priorities, or explain a route change.</p><div className="suggestions">{['Prioritize delivery C.','Why did the robot change direction?','Summarize the mission.'].map(t=><button key={t} onClick={()=>send(t)} disabled={chatBusy}>{t}<ArrowRight size={13}/></button>)}</div></div>:messages.map((m,i)=><div className={'chat-message '+m.role} key={i}><span>{m.role==='user'?'YOU':m.role==='system'?'SYSTEM · AI UNAVAILABLE':'GEMMA 4'}</span><p>{m.text}</p></div>)}{chatBusy&&<div className="thinking">Gemma is reviewing the mission…</div>}<div ref={chatEnd}/></div><form className="chat-input" onSubmit={e=>{e.preventDefault();send();}}><input aria-label="Message Gemma" placeholder="Ask your AI coordinator…" value={input} onChange={e=>setInput(e.target.value)} maxLength={2000}/><button aria-label="Send message" disabled={chatBusy||!input.trim()}><Send size={16}/></button></form><p className="assistant-footnote"><ShieldCheck size={11}/>All instructions validated before execution</p></section></aside></div>
-      <footer><span><i className="dot"/>RouteMind simulation engine <span className="footer-sep">/</span>1 robot · {Object.keys(map.stations).filter(s=>'ABCDE'.includes(s)||state.deliveries.some(d=>d.station===s)).length} stations</span><span>NetworkX A* <b>+</b> Google OR-Tools <b>+</b> Gemma 4</span></footer>
-    </>}</main></div>
-    {modal&&map&&state&&<div className="modal-backdrop" onClick={()=>setModal(false)}><form className="modal panel" role="dialog" aria-modal="true" aria-label="Mission dialog" onClick={e=>e.stopPropagation()} onSubmit={e=>{e.preventDefault();action('/deliveries',{station,priority});setModal(false);}}><div className="panel-heading"><h2>Add a delivery</h2><button aria-label="Close dialog" onClick={()=>setModal(false)} type="button"><X size={18}/></button></div><p>One delivery per station for each mission.</p><label>Destination<select value={station} onChange={e=>setStation(e.target.value)}>{Object.keys(map.stations).map(s=><option key={s} disabled={state.deliveries.some(d=>d.station===s)} value={s}>Station {s}{state.deliveries.some(d=>d.station===s)?' · already requested':''}</option>)}</select></label><label>Priority<select value={priority} onChange={e=>setPriority(e.target.value)}><option value="normal">Normal</option><option value="urgent">Urgent — before normal deliveries</option></select></label><button className="button primary" disabled={busy||state.deliveries.some(d=>d.station===station)}><Plus size={16}/>Add & replan</button></form></div>}
-    {help&&<div className="modal-backdrop" onClick={()=>setHelp(false)}><div className="modal panel" role="dialog" aria-modal="true" aria-label="Mission dialog" onClick={e=>e.stopPropagation()}><div className="panel-heading"><h2>Your demo, in six steps</h2><button aria-label="Close guide" onClick={()=>setHelp(false)}><X size={18}/></button></div><ol><li>Load the sample mission in the delivery queue.</li><li>Optimize the route and compare the calculated distances.</li><li>Start the robot. It follows backend A* grid coordinates.</li><li>Block corridor A–C or edit a cell ahead of the robot.</li><li>Prioritize a delivery or simulate low battery.</li><li>Watch deliveries finish and export the mission report.</li></ol><p>Gemma chat needs GEMINI_API_KEY in the project .env. Without it, use the manual urgent-delivery buttons.</p><button className="button primary" onClick={()=>setHelp(false)}>Got it <ArrowRight size={15}/></button></div></div>}
-  </div>;
-}
+export default function App() {
+  const [state, setState] = useState<FleetState | null>(null);
+  const [map, setMap] = useState<CityMap | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [online, setOnline] = useState(false);
+  const [selected, setSelected] = useState('RM-1');
+  const [autoFocus, setAutoFocus] = useState(true);
+  const [armed, setArmed] = useState<string | null>(null);
+  const [announced, setAnnounced] = useState(false);
+  const [showGraph, setShowGraph] = useState(true);
+  const [help, setHelp] = useState(false);
+  const mutation = useRef(false);
+  const version = useRef(0);
+  const lastThought = useRef(0);
 
-function Metric({icon,label,value,detail,tone}:{icon:React.ReactNode;label:string;value:React.ReactNode;detail:string;tone:string}){return <div className="stat-card"><div className="stat-top"><span>{label}</span><i className={tone}>{icon}</i></div><strong>{value}</strong><p>{detail}</p></div>;}
-function WarehouseMap({map,state,editing,onCell}:{map:Warehouse;state:State;editing:boolean;onCell:(cell:CellPos)=>void}){
- const robotPosition=useRobotPosition(state.trail);
- const size=26,center=(v:number)=>v*size+size/2;
- return <svg viewBox={`0 0 ${map.width*size} ${map.height*size}`} role="img" aria-label="Live warehouse map with robot, five delivery stations, shelves and planned path">
- <defs><pattern id="grid" width={size} height={size} patternUnits="userSpaceOnUse"><path d={`M ${size} 0 L 0 0 0 ${size}`} fill="none" stroke="#263342" strokeWidth=".5"/><circle cx={size/2} cy={size/2} r=".7" fill="#2b3b4b"/></pattern><filter id="glow"><feGaussianBlur stdDeviation="4"/></filter><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" x2="0" y1="0" y2="6" stroke="#f2806e" strokeWidth="2" opacity=".4"/></pattern></defs>
- <rect width="100%" height="100%" fill="#101923"/><rect x="26" y="26" width={(map.width-2)*size} height={(map.height-2)*size} fill="url(#grid)" stroke="#334352" rx="3"/>
- {[2,7,12,17,22].map(x=><text className="map-coordinate" key={x} x={center(x)} y="17" textAnchor="middle">{String(x).padStart(2,'0')}</text>)}
- {[3,8,13].map(y=><text className="map-coordinate" key={y} x="12" y={center(y)} textAnchor="middle">{String(y).padStart(2,'0')}</text>)}
- {map.shelves.map(([x,y,w,h],i)=><g key={i}><rect x={x*size+2} y={y*size+2} width={w*size-4} height={h*size-4} rx="5" fill="#202c39" stroke="#3a495b"/>{Array.from({length:w},(_,k)=><rect key={k} x={(x+k)*size+6} y={y*size+7} width={size-12} height={h*size-14} rx="2" fill="#2b3949" stroke="#354659"/>)}<text x={(x+w/2)*size} y={(y+h/2)*size+3} textAnchor="middle" className="shelf-label">RACK {String(i+1).padStart(2,'0')}</text></g>)}
- <text x="325" y="212" className="aisle-label" textAnchor="middle">CROSS AISLE A–C</text>
- {state.path.length>1&&<><polyline points={state.path.map(([x,y])=>`${center(x)},${center(y)}`).join(' ')} fill="none" stroke="#b8ef71" strokeWidth="7" opacity=".12"/><polyline points={state.path.map(([x,y])=>`${center(x)},${center(y)}`).join(' ')} fill="none" stroke="#b8ef71" strokeWidth="2.5" strokeLinejoin="round" strokeDasharray="5 4" className={state.status==='running'?'route-moving':''}/></>}
- {state.obstacles.map(([x,y])=><g key={`${x},${y}`}><rect x={x*size+2} y={y*size+2} width={size-4} height={size-4} fill="#542d2d" stroke="#ed8072" rx="3"/><rect x={x*size+2} y={y*size+2} width={size-4} height={size-4} fill="url(#hatch)"/></g>)}
- <g transform={`translate(${center(map.base[0])},${center(map.base[1])})`}><rect x="-17" y="-17" width="34" height="34" rx="8" fill="#17382f" stroke="#5dbba4"/><path d="M 2 -10 L -5 1 H 1 L -2 10 L 7 -2 H 1 Z" fill="#72d4af"/><text y="31" textAnchor="middle" className="station-label">CHARGING DOCK</text></g>
- {Object.entries(map.stations).filter(([name])=>'ABCDE'.includes(name)||state.deliveries.some(d=>d.station===name)).map(([name,[x,y]])=>{const d=state.deliveries.find(d=>d.station===name),done=d?.status==='completed',urgent=d?.priority==='urgent';return <g key={name} transform={`translate(${center(x)},${center(y)})`}><circle r="21" fill={done?'#9bd96710':'#88a6ef0c'}/><rect x="-14" y="-14" width="28" height="28" rx="8" fill={done?'#253f2b':'#26354a'} stroke={urgent?'#f3b66a':done?'#ade57c':'#7e9ad0'}/><text textAnchor="middle" y="5" fill={done?'#b8ef71':'#d2e1ff'} fontSize="14" fontWeight="600">{done?'✓':name}</text><text y="31" textAnchor="middle" className="station-label">STATION {name}</text>{urgent&&!done&&<circle cx="13" cy="-13" r="4" fill="#f3b66a"/>}</g>;})}
- <g className="robot" style={{transform:`translate(${center(robotPosition[0])}px,${center(robotPosition[1])}px)`}}><circle r="23" fill="#b8ef71" opacity=".15"/><circle r="16" fill="#b8ef71" opacity=".15" filter="url(#glow)"/><rect x="-11" y="-11" width="22" height="22" rx="7" fill="#c0f384" stroke="#e4ffbe" strokeWidth="1.5"/><rect x="-6" y="-4" width="12" height="8" rx="3" fill="#25382b"/><circle cx="-3" cy="0" r="1.5" fill="#bcf280"/><circle cx="3" cy="0" r="1.5" fill="#bcf280"/><path d="M -5 8 L 5 8" stroke="#49733b" strokeWidth="1.5"/></g>
- {editing&&Array.from({length:map.width*map.height},(_,i)=>{const cell:CellPos=[i%map.width,Math.floor(i/map.width)];if(map.walls.some(w=>same(w,cell))||Object.values(map.stations).some(s=>same(s,cell))||same(cell,map.base)||same(cell,state.position))return null;return <rect role="button" tabIndex={0} aria-label={`Toggle obstacle ${cell.join(',')}`} key={i} className="grid-hit" x={cell[0]*size} y={cell[1]*size} width={size} height={size} fill="transparent" onClick={()=>onCell(cell)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onCell(cell);}}}/>;})}
- </svg>;
-}
-// Replay each authoritative traversed cell, even if a polling response skipped ticks.
-function useRobotPosition(trail:CellPos[]){
- const [position,setPosition]=useState<CellPos>(trail.at(-1)!);
- const latest=useRef(trail),shown=useRef(trail.length-1);
- latest.current=trail;
- useEffect(()=>{const timer=setInterval(()=>{
-   if(shown.current>=latest.current.length){shown.current=latest.current.length-1;setPosition(latest.current[shown.current]);}
-   else if(shown.current<latest.current.length-1){shown.current++;setPosition(latest.current[shown.current]);}
- },180);return()=>clearInterval(timer);},[]);
- return position;
-}
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        if (!mutation.current) {
+          const v = version.current;
+          const s = await api<FleetState>('/state');
+          if (!stopped && !mutation.current && v === version.current) {
+            setState(s);
+            setOnline(true);
+          }
+        }
+      } catch {
+        if (!stopped) setOnline(false);
+      } finally {
+        if (!stopped) timer = setTimeout(poll, 250);
+      }
+    };
+    poll();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, []);
 
+  useEffect(() => {
+    if (online && !map) api<CityMap>('/map').then((m) => { setMap(m); setError(''); }).catch(() => setError('Backend unavailable. Start FastAPI on port 8000.'));
+  }, [online, map]);
+
+  // Follow the action: when any robot starts thinking or makes a new decision, show its brain.
+  useEffect(() => {
+    if (!state || !autoFocus) return;
+    const thinking = state.robots.find((r) => r.status === 'thinking');
+    const newest = state.robots.flatMap((r) => r.thoughts.slice(0, 1)).sort((a, b) => b.id - a.id)[0];
+    if (thinking && thinking.id !== selected) setSelected(thinking.id);
+    else if (newest && newest.id > lastThought.current) {
+      lastThought.current = newest.id;
+      setSelected(newest.robot);
+    }
+  }, [state, autoFocus, selected]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setArmed(null);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const action = useCallback(async (url: string, body: unknown = {}, method?: string) => {
+    if (mutation.current) return;
+    mutation.current = true;
+    version.current++;
+    setBusy(true);
+    setError('');
+    try {
+      setState(await api<FleetState>(url, body, method));
+      setOnline(true);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      mutation.current = false;
+      setBusy(false);
+    }
+  }, []);
+
+  const place = (p: LatLon) => {
+    if (!armed) return;
+    action('/hazards', { lat: p[0], lon: p[1], kind: armed, announced });
+  };
+
+  const exportMission = () => {
+    if (!state) return;
+    const blob = new Blob([JSON.stringify({ simulation: true, city: map?.name, exported_at: new Date().toISOString(), ...state }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'routemind-mission.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const m = state?.metrics;
+  const robot = state?.robots.find((r) => r.id === selected) ?? state?.robots[0];
+  const tool = TOOLS.find((t) => t.kind === armed);
+
+  return (
+    <div className="app-shell">
+      <aside className="rail">
+        <div className="brand-mark"><Route size={25} /></div>
+        <div className="rail-links">
+          <button aria-label="Overview" title="Overview" className="active" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><LayoutDashboard size={21} /></button>
+          <button aria-label="City map" title="City map" onClick={() => scrollTo('map-panel')}><MapIcon size={21} /></button>
+          <button aria-label="Robot brain" title="Robot brain" onClick={() => scrollTo('brain')}><Brain size={21} /></button>
+        </div>
+        <button title="Demo guide" aria-label="Demo guide" onClick={() => setHelp(true)}><CircleHelp size={21} /></button>
+        <div className="avatar">RM</div>
+      </aside>
+      <div className="workspace">
+        <header className="topbar">
+          <a className="wordmark" href="/">RouteMind <span>AI</span></a>
+          <span className="divider" />
+          <span className="breadcrumb">Fleet control · {map?.name ?? '…'}</span>
+          <div className="header-right">
+            <span className="demo-badge">SIMULATION</span>
+            {state && <span className={'brain-mode ' + (state.ai.available ? 'ai' : 'reflex')} title={state.ai.reason}>{state.ai.available ? <><Brain size={12} /> Robot brains: {state.ai.model}</> : <><Cpu size={12} /> Robot brains: reflex rules</>}</span>}
+            <span className="connection"><i className={online ? 'dot' : 'dot offline'} />{online ? 'System online' : 'Connecting'}</span>
+          </div>
+        </header>
+        <main>
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">OPERATIONS / {map?.name.toUpperCase() ?? 'CITY'}</div>
+              <h1>Fleet control{state && <span className="live-pill"><i className="dot" />{state.status} · {state.clock}</span>}</h1>
+              <p>Sidewalk robots on real streets. Each one sees, thinks and decides for itself; the server coordinates the fleet.</p>
+            </div>
+            <button className="button secondary" onClick={exportMission} disabled={!state}><Download size={15} />Export mission</button>
+          </div>
+          {error && <div className="error" role="alert"><TriangleAlert size={17} />{error}<button aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>}
+          {!state || !map || !robot || !m ? (
+            <div className="loading"><Bot size={42} /><h2>Connecting to the fleet server</h2><p>Waiting for the FastAPI simulation at localhost:8000.</p></div>
+          ) : <>
+            <section className="stats-grid">
+              <Metric icon={<Package />} label="Orders delivered" value={<>{m.delivered}<small> / {m.orders}</small></>} detail={`${m.active} robots on the street`} tone="green" />
+              <Metric icon={<Route />} label="Fleet distance" value={<>{(m.fleet_distance / 1000).toFixed(2)}<small> km</small></>} detail="Real street metres (OpenStreetMap)" tone="blue" />
+              <Metric icon={<Brain />} label="Robot decisions" value={<>{m.ai_decisions + m.reflex_decisions}</>}
+                detail={`${m.ai_decisions} AI agent${m.avg_ai_ms ? ` (avg ${(m.avg_ai_ms / 1000).toFixed(1)} s)` : ''} · ${m.reflex_decisions} reflex`} tone="purple" />
+              <Metric icon={<Radio />} label="Shared reports" value={<>{m.reports}</>} detail={`${m.reroutes} re-routes · ${m.hazards_seen} obstacles in view`} tone="amber" />
+            </section>
+            <div className="dashboard-grid">
+              <div className="main-column">
+                <section id="map-panel" className="panel map-panel">
+                  <div className="panel-heading">
+                    <div className="heading-title"><MapIcon size={18} /><h2>Live city map</h2><span className="subtle-tag">{map.name}</span></div>
+                    <span className={'status-pill ' + state.status}><i className="dot" />{state.status}</span>
+                  </div>
+                  <div className="map-toolbar">
+                    <div className="tools">
+                      <span className="tools-label">Drop an obstacle:</span>
+                      {TOOLS.map((t) => (
+                        <button key={t.kind} className={'tool' + (armed === t.kind ? ' selected' : '')} onClick={() => setArmed(armed === t.kind ? null : t.kind)} title={`Place: ${t.label}`}>
+                          <t.icon size={13} />{t.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="tools">
+                      <button className={'toggle' + (!announced ? ' selected' : '')} onClick={() => setAnnounced(false)} title="Robots must discover it with their sensors"><Eye size={12} />Surprise</button>
+                      <button className={'toggle' + (announced ? ' selected' : '')} onClick={() => setAnnounced(true)} title="The server knows in advance and re-routes the fleet"><Megaphone size={12} />City notice</button>
+                      <button className={'toggle' + (showGraph ? ' selected' : '')} onClick={() => setShowGraph(!showGraph)} title="The street graph the robots read"><Network size={12} />Road graph</button>
+                    </div>
+                  </div>
+                  <div className="map-wrap">
+                    <FleetMap map={map} state={state} selected={robot.id} onSelect={(id) => { setSelected(id); setAutoFocus(false); }}
+                      armed={armed} onPlace={place} onRemoveHazard={(id) => action(`/hazards/${id}`, undefined, 'DELETE')} showGraph={showGraph} />
+                    {tool && <div className="edit-hint">Click a street to place <b>{tool.label}</b> · {announced ? 'city notice: the server knows it' : 'surprise: robots must see it'} · Esc to stop</div>}
+                  </div>
+                  <div className="map-legend">
+                    <span><i className="legend-line" />Planned route</span>
+                    <span><i className="legend-cone" />Camera range</span>
+                    <span><i className="legend-pin pickup">P</i>Pickup</span>
+                    <span><i className="legend-pin dropoff">D</i>Drop-off</span>
+                    <span><i className="legend-hz hidden" />Hidden obstacle</span>
+                    <span><i className="legend-hz reported" />On fleet map</span>
+                  </div>
+                  <div className="simulation-controls">
+                    <button className="button primary" disabled={busy || !online} onClick={() => action(state.running ? '/simulation/pause' : '/simulation/start')}>
+                      {state.running ? <Pause size={16} /> : <Play size={16} />}{state.running ? 'Pause fleet' : state.time ? 'Resume fleet' : 'Start fleet'}
+                    </button>
+                    <div className="speed" role="group" aria-label="Simulation speed">
+                      {SPEEDS.map((s) => <button key={s} className={state.speed === s ? 'selected' : ''} disabled={busy} onClick={() => action('/simulation/speed', { speed: s })}>×{s}</button>)}
+                    </div>
+                    <button className="button secondary" disabled={busy || !online} onClick={() => action('/dispatch')}><Sparkles size={16} />Re-optimise</button>
+                    <button className="icon-button" aria-label="Reset simulation" title="Reset simulation" disabled={busy} onClick={() => { lastThought.current = 0; setAutoFocus(true); action('/simulation/reset'); }}><RotateCcw size={17} /></button>
+                    <label className="follow"><input type="checkbox" checked={autoFocus} onChange={(e) => setAutoFocus(e.target.checked)} />Follow decisions</label>
+                  </div>
+                </section>
+                <BrainPanel robot={robot} ai={state.ai} busy={busy} onLowBattery={(id) => action(`/robots/${id}/battery`, { level: 24 })} />
+                <div className="lower-grid">
+                  <OrdersPanel map={map} orders={state.orders} busy={busy} onSample={() => action('/mission/sample')}
+                    onAdd={(pickup, dropoff, priority) => action('/orders', { pickup, dropoff, priority })}
+                    onPriority={(id, priority) => action(`/orders/${id}/priority`, { priority })} />
+                  <ActivityPanel events={state.events} robots={state.robots} />
+                </div>
+              </div>
+              <aside className="right-column">
+                <FleetPanel robots={state.robots} selected={robot.id} onSelect={(id) => { setSelected(id); setAutoFocus(false); }} />
+                <DispatchPanel state={state} />
+                <CopilotPanel ai={state.ai} />
+              </aside>
+            </div>
+            <footer>
+              <span><i className="dot" />RouteMind fleet engine <span className="footer-sep">/</span>{state.robots.length} robots · {km(m.fleet_distance)} driven · {map.attribution}, fetched {map.fetched}</span>
+              <span>OpenStreetMap <b>+</b> A* <b>+</b> OR-Tools <b>+</b> onboard AI agents</span>
+            </footer>
+          </>}
+        </main>
+      </div>
+      {help && (
+        <div className="modal-backdrop" onClick={() => setHelp(false)}>
+          <div className="modal panel" role="dialog" aria-modal="true" aria-label="Demo guide" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-heading"><h2>Your demo, step by step</h2><button aria-label="Close guide" onClick={() => setHelp(false)}><X size={18} /></button></div>
+            <ol>
+              <li>Load the sample mission: six real orders. The dispatcher splits them across the robots.</li>
+              <li>Start the fleet. Every robot follows the real streets of {map?.name}.</li>
+              <li>Pick <b>Roadworks</b> and click a street on a robot's dashed route, ahead of it. Nobody knows it is there.</li>
+              <li>The robot's camera cone turns amber when it sees it. It stops and its brain decides; read why in Robot brain.</li>
+              <li>Try <b>Pedestrians</b> (it usually waits), <b>Small obstacle</b> (passes slowly) and a <b>Parked van</b> with an urgent parcel.</li>
+              <li>Switch to <b>City notice</b> for a closure the server knows in advance: the fleet re-routes before anyone sees it.</li>
+              <li>Simulate low battery, or ask the copilot why a robot changed its route.</li>
+            </ol>
+            <p>With GEMINI_API_KEY in .env the decisions come from the AI agent; without it the reflex rules decide. Every decision says which one made it.</p>
+            <button className="button primary" onClick={() => setHelp(false)}>Got it <ArrowRight size={15} /></button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
