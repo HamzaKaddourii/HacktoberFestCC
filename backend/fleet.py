@@ -627,7 +627,7 @@ class Fleet:
             self.counts['ai_ms'] += result['latency_ms']
         else:
             self.counts['reflex'] += 1
-        brain = result['model'] or 'reflex rules'
+        brain = result['model'] or 'offline rules'
         self.event(f'{r.id} decided: {ACTION_LABELS[d.action]}', f'[{brain}] {d.analysis}', 'ai' if result['source'] == 'ai' else 'info', r.id)
         if trigger != 'low_battery' and h is None:
             self.outcome(r, 'the obstacle was gone before acting')

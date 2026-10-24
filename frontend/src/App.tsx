@@ -254,7 +254,7 @@ export default function App() {
           <span className="breadcrumb">Fleet control · {map?.name ?? '…'}</span>
           <div className="header-right">
             <span className="demo-badge">SIMULATION</span>
-            {state && <span className={'brain-mode ' + (state.ai.available ? 'ai' : 'reflex')} title={state.ai.reason}>{state.ai.available ? <><Brain size={12} /> Robot brains: {state.ai.model}</> : <><Cpu size={12} /> Robot brains: reflex rules</>}</span>}
+            {state && <span className={'brain-mode ' + (state.ai.available ? 'ai' : 'reflex')} title={state.ai.reason}>{state.ai.available ? <><Brain size={12} /> Robot brains: {state.ai.model}</> : <><Cpu size={12} /> Robot brains: offline rules</>}</span>}
             <span className="connection"><i className={online ? 'dot' : 'dot offline'} />{online ? 'System online' : 'Connecting'}</span>
           </div>
         </header>
@@ -275,7 +275,7 @@ export default function App() {
               <Metric icon={<Package />} label="Orders delivered" value={<>{m.delivered}<small> / {m.orders}</small></>} detail={`${m.active} robots on the street`} tone="green" />
               <Metric icon={<Route />} label="Fleet distance" value={<>{(m.fleet_distance / 1000).toFixed(2)}<small> km</small></>} detail="Real street metres (OpenStreetMap)" tone="blue" />
               <Metric icon={<Brain />} label="Robot decisions" value={<>{m.ai_decisions + m.reflex_decisions}</>}
-                detail={`${m.ai_decisions} AI agent${m.avg_ai_ms ? ` (avg ${(m.avg_ai_ms / 1000).toFixed(1)} s)` : ''} · ${m.reflex_decisions} reflex`} tone="purple" />
+                detail={`${m.ai_decisions} AI agent${m.avg_ai_ms ? ` (avg ${(m.avg_ai_ms / 1000).toFixed(1)} s)` : ''} · ${m.reflex_decisions} offline`} tone="purple" />
               <Metric icon={<Radio />} label="Shared reports" value={<>{m.reports}</>} detail={`${m.reroutes} re-routes · ${m.hazards_seen} obstacles in view`} tone="amber" />
             </section>
             <div className="dashboard-grid">
@@ -388,7 +388,7 @@ export default function App() {
               <li>Switch to <b>City notice</b> for a closure the server knows in advance: the fleet re-routes before anyone sees it.</li>
               <li>Simulate low battery, or ask the copilot why a robot changed its route.</li>
             </ol>
-            <p>With GEMINI_API_KEY in .env the decisions come from the AI agent; without it the reflex rules decide. Every decision says which one made it.</p>
+            <p>With GEMINI_API_KEY in .env the decisions come from the AI agent; without it the offline rules decide. Every decision says which one made it.</p>
             <button className="button primary" onClick={() => setHelp(false)}>Got it <ArrowRight size={15} /></button>
           </div>
         </div>

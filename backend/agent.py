@@ -7,7 +7,7 @@ decisions. The agent then decides one action.
 
 Two layers, like a real robot:
 - the AI agent (Gemma through the Google GenAI API) reasons over the full observation;
-- reflex rules decide instantly from the classifier label when the AI is unavailable, slow or invalid.
+- offline rules decide instantly from the classifier label when the AI fails 3 times or gives an unsafe answer.
 Every decision records which layer made it, so the dashboard never presents a rule as AI output.
 """
 import json
@@ -79,11 +79,12 @@ class RobotAgent:
                 decision = self.llm.generate(self.prompt(obs), Decision, info)
                 problem = check(decision, obs)
                 if problem is None:
-                    return {'decision': normalise(decision), 'source': 'ai', 'model': info.get('model', self.llm.model),
+                    return {'decision': normalise(decision), 'source': 'ai', 'model': self.llm.model,
                             'latency_ms': round((time.perf_counter()-started)*1000), 'note': None}
-                note = f'AI answer rejected ({problem}); reflex rules took over.'
+                note = f'AI answer rejected ({problem}); offline rules decided.'
             except Exception as exc:
-                note = f'AI unavailable for this decision ({type(exc).__name__}); reflex rules took over.'
+                tries = info.get('tries', 1)
+                note = f'{self.llm.model} failed {tries} time{"s" if tries > 1 else ""} ({type(exc).__name__}); offline rules decided.'
         return {'decision': reflex(obs), 'source': 'reflex', 'model': None,
                 'latency_ms': round((time.perf_counter()-started)*1000), 'note': note}
 

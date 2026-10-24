@@ -127,22 +127,34 @@ def test_operator_route_for_one_robot(monkeypatch):
     assert fleet.loc(fleet.robot('RM-2'))[0] == fleet.city.hub
 
 
-def test_busy_model_falls_back_to_the_next_one():
+def test_failed_calls_are_retried_then_raise_for_offline_rules():
     from types import SimpleNamespace
+    import pytest
     from backend.agent import Decision
     from backend.llm import LLM
 
     class Busy(Exception):
         code = 503
 
-    def generate_content(model, contents, config=None):
-        if model == 'gemma-main':
-            raise Busy('high demand')
-        return SimpleNamespace(text='{"analysis": "Go around.", "action": "detour"}')
+    calls = []
+
+    def flaky(fail_times):
+        def generate_content(model, contents, config=None):
+            calls.append(model)
+            if len(calls) <= fail_times:
+                raise Busy('high demand')
+            return SimpleNamespace(text='{"analysis": "Go around.", "action": "detour"}')
+        return generate_content
 
     llm = LLM()
-    llm.client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
-    llm.chain = ['gemma-main', 'backup-model']
+    llm.model, llm.attempts = 'gemma-main', 3
+    llm.client = SimpleNamespace(models=SimpleNamespace(generate_content=flaky(2)))
     info = {}
     assert llm.generate('prompt', Decision, info).action == 'detour'
-    assert info['model'] == 'backup-model'
+    assert info['tries'] == 3 and calls == ['gemma-main'] * 3          # same model, no backups
+    calls.clear()
+    llm.client = SimpleNamespace(models=SimpleNamespace(generate_content=flaky(99)))
+    info = {}
+    with pytest.raises(Busy):
+        llm.generate('prompt', Decision, info)
+    assert info['tries'] == 3 and len(calls) == 3

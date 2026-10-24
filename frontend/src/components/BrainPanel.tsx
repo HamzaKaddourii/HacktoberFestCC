@@ -23,7 +23,7 @@ function ThoughtCard({ t }: { t: Thought }) {
       {t.radio && <div className="radio"><Radio size={11} /> “{t.radio}”</div>}
       <footer>
         <span className={'source ' + t.source}>
-          {t.source === 'ai' ? <><Brain size={11} /> {t.model} · {(t.latency_ms / 1000).toFixed(1)} s</> : <><Cpu size={11} /> Reflex rules</>}
+          {t.source === 'ai' ? <><Brain size={11} /> {t.model} · {(t.latency_ms / 1000).toFixed(1)} s</> : <><Cpu size={11} /> Offline rules</>}
         </span>
         <span className={'outcome' + (t.outcome ? '' : ' pending')}>→ {t.outcome ?? 'in progress'}</span>
       </footer>
@@ -56,7 +56,7 @@ export default function BrainPanel({ robot: r, ai, busy, onLowBattery, onPlanRou
           <button className="button secondary small" disabled={busy} onClick={() => onPlanRoute(r.id)}><Route size={12} />{r.mission ? 'Edit route' : 'Plan route'}</button>
         </div>
         <span className={'brain-mode ' + (ai.available ? 'ai' : 'reflex')} title={ai.reason}>
-          {ai.available ? <><Brain size={12} /> AI agent · {ai.model}</> : <><Cpu size={12} /> Reflex rules · AI offline</>}
+          {ai.available ? <><Brain size={12} /> AI agent · {ai.model}</> : <><Cpu size={12} /> Offline rules · AI unavailable</>}
         </span>
       </div>
       <div className="brain-grid">
@@ -103,7 +103,7 @@ export default function BrainPanel({ robot: r, ai, busy, onLowBattery, onPlanRou
             <article className="thought thinking-card">
               <header><span className="trigger">Thinking…</span><span className="where">{r.street}</span></header>
               {cam && <blockquote>“{cam.description}”</blockquote>}
-              <p className="analysis">{ai.available ? `${ai.model} is weighing waiting, passing, detours and the fleet's reports.` : 'Reflex rules are deciding.'}</p>
+              <p className="analysis">{ai.available ? `${ai.model} is weighing waiting, passing, detours and the fleet's reports.` : 'Offline rules are deciding.'}</p>
             </article>
           )}
           {r.thoughts.length === 0 && r.status !== 'thinking' && (
